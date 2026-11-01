@@ -1,4 +1,4 @@
-# BoardRunner plan (v0.1)
+# BoardRunner plan (v0.2)
 
 Goal: anyone with a Notion account and an agent CLI can go from zero to a first finished card in about 15 minutes, on their own machines, with their own agent names.
 
@@ -55,9 +55,10 @@ The core makes decisions and touches nothing. Everything that touches the outsid
 
 | # | Decision | Default until decided |
 | --- | --- | --- |
-| 1 | Licence and when to go public | Private, no licence |
+| 1 | When to go public | Private until M5 |
 | 2 | Name | BoardRunner |
 
 ## Log
 
 - 2026-11-01 v0.1: project opened, skeleton and plan written.
+- 2026-11-01 v0.2: licence decided: MIT.

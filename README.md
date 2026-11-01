@@ -31,3 +31,7 @@ The board is the only hub: machines never talk to each other, each one handles o
 uv run pytest
 uv run boardrunner --version
 ```
+
+## License
+
+[MIT](LICENSE)
