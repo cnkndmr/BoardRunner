@@ -12,10 +12,20 @@ Three rules shape the order of the checks in `decide`:
 from __future__ import annotations
 
 import argparse
+import http.client
+import json
+import os
+import socket
+import sys
+import time
+import tomllib
+import urllib.error
+import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from hashlib import sha256
+from pathlib import Path
 from typing import Callable, Protocol
 from zoneinfo import ZoneInfo
 
@@ -539,12 +549,321 @@ def run_pass(board: Board, runner: Runner, state: State, policy: Policy, now: da
     return log
 
 
+NOTION_API = "https://api.notion.com/v1"
+NOTION_VERSION = "2022-06-28"
+NOTION_VIEWS_VERSION = "2026-03-11"
+MAX_TEXT = 2000  # Notion's limit for one text object
+MAX_BLOCKS = 100  # and for one append request
+FIELD_NAMES = {"title": "Name", "stage": "Stage", "assignee": "Assignee", "schedule": "Schedule", "note": "Revision note"}
+STAGE_COLORS = {Stage.INBOX: "gray", Stage.PLANNING: "purple", Stage.PLAN_READY: "yellow", Stage.APPROVED: "blue",
+                Stage.FOR_HUMAN: "orange", Stage.RUNNING: "green", Stage.DONE: "default", Stage.FAILED: "red",
+                Stage.STOPPED: "brown"}
+SCHEDULE_COLORS = {Schedule.NOW: "red", Schedule.NIGHT: "blue", Schedule.AT_DATE: "orange", Schedule.MANUAL: "gray"}
+NOT_ARCHIVED = {"property": "Archive", "checkbox": {"equals": False}}
+
+
+class SetupError(Exception):
+    """A problem the user can fix; shown without a traceback."""
+
+
+class NotionError(Exception):
+    def __init__(self, code: int, message: str):
+        super().__init__(message)
+        self.code = code
+
+
+def _safe_to_resend(method: str, path: str) -> bool:
+    """Resending must not duplicate anything. Appending blocks or creating pages would."""
+    if method in ("GET", "DELETE"):
+        return True
+    if method == "POST":
+        return path.endswith("/query")
+    return not path.endswith("/children")
+
+
+def notion_request(token: str, method: str, path: str, body: dict | None = None, version: str = NOTION_VERSION) -> dict:
+    data = json.dumps(body).encode() if body is not None else None
+    for attempt in range(5):
+        request = urllib.request.Request(NOTION_API + path, data=data, method=method, headers={
+            "Authorization": f"Bearer {token}", "Notion-Version": version, "Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return json.loads(response.read() or b"{}")
+        except urllib.error.HTTPError as error:
+            # 429 was not processed; after 502 or 503 the server may have processed the request.
+            if attempt < 4 and (error.code == 429 or (error.code in (502, 503) and _safe_to_resend(method, path))):
+                try:
+                    time.sleep(float(error.headers.get("Retry-After") or 2 ** attempt))
+                except ValueError:
+                    time.sleep(2 ** attempt)
+                continue
+            raise NotionError(error.code, f"{method} {path}: {error.code} {error.read()[:300]!r}") from error
+        except (OSError, http.client.HTTPException, ValueError) as error:
+            reason = getattr(error, "reason", error)
+            never_sent = isinstance(reason, (socket.gaierror, ConnectionRefusedError))
+            if attempt < 4 and (never_sent or _safe_to_resend(method, path)):
+                time.sleep(2 ** attempt)
+                continue
+            raise NotionError(0, f"{method} {path}: {error}") from error
+    raise NotionError(0, f"{method} {path}: out of attempts")
+
+
+def _plain(prop: dict | None):
+    value = prop or {}
+    for kind in ("title", "rich_text"):
+        if kind in value:
+            return "".join(part.get("plain_text") or part.get("text", {}).get("content", "") for part in value[kind] or [])
+    if "select" in value:
+        return (value["select"] or {}).get("name")
+    if "date" in value:
+        return (value["date"] or {}).get("start")
+    if "unique_id" in value:
+        unique = value["unique_id"] or {}
+        return str(unique["number"]) if unique.get("number") is not None else None
+    return None
+
+
+def _known(kind, value):
+    """A renamed or unknown option stays a plain string: `decide` then waits instead of crashing the pass."""
+    try:
+        return kind(value)
+    except ValueError:
+        return value
+
+
+def card_from_page(page: dict) -> Card:
+    props = page.get("properties", {})
+    title = next((_plain(value) for value in props.values() if "title" in (value or {})), "") or ""
+    return Card(id=page["id"], number=_plain(props.get("Card No")) or page["id"][:8], title=title.strip(),
+                stage=_known(Stage, _plain(props.get("Stage")) or Stage.INBOX),
+                schedule=_known(Schedule, value) if (value := _plain(props.get("Schedule"))) else None,
+                due=_plain(props.get("Due")), revision_note=_plain(props.get("Revision note")) or "",
+                created_by=(page.get("created_by") or {}).get("id"),
+                edited_by=(page.get("last_edited_by") or {}).get("id"), edited_at=page.get("last_edited_time"),
+                assignee=_plain(props.get("Assignee")))
+
+
+def _rich_text(text: str) -> list[dict]:
+    pieces = [text[i:i + MAX_TEXT] for i in range(0, len(text), MAX_TEXT)]
+    return [{"type": "text", "text": {"content": piece}} for piece in pieces[:100]]
+
+
+def text_blocks(text: str) -> list[dict]:
+    """One paragraph block per line. Keeping Markdown formatting is left for later."""
+    return [{"object": "block", "type": "paragraph", "paragraph": {"rich_text": _rich_text(line)}}
+            for line in text.splitlines() if line.strip()]
+
+
+class NotionBoard:
+    def __init__(self, token: str, database_id: str, request: Callable[..., dict] = notion_request):
+        self.token, self.database_id, self._request = token, database_id, request
+
+    def _call(self, *args, **kwargs) -> dict:
+        return self._request(self.token, *args, **kwargs)
+
+    def list_cards(self) -> list[Card]:
+        pages, body = [], {"page_size": 100, "filter": NOT_ARCHIVED}
+        while True:
+            reply = self._call("POST", f"/databases/{self.database_id}/query", body)
+            pages += [page for page in reply.get("results", []) if not page.get("archived") and not page.get("in_trash")]
+            if not reply.get("has_more"):
+                return [card_from_page(page) for page in pages]
+            body = {**body, "start_cursor": reply["next_cursor"]}
+
+    def write(self, card_id: str, **fields) -> None:
+        props = {}
+        for name, value in fields.items():
+            if name not in FIELD_NAMES:
+                raise ValueError(name)
+            if name == "title":
+                props[FIELD_NAMES[name]] = {"title": _rich_text(value)}
+            elif name == "note":
+                props[FIELD_NAMES[name]] = {"rich_text": _rich_text(value) if value else []}
+            else:
+                props[FIELD_NAMES[name]] = {"select": {"name": str(value)} if value else None}
+        self._call("PATCH", f"/pages/{card_id}", {"properties": props})
+
+    def append(self, card_id: str, text: str) -> None:
+        """All or nothing: if a later chunk fails, earlier chunks are removed so a retry cannot duplicate them."""
+        blocks, added = text_blocks(text), []
+        try:
+            for start in range(0, len(blocks), MAX_BLOCKS):
+                reply = self._call("PATCH", f"/blocks/{card_id}/children", {"children": blocks[start:start + MAX_BLOCKS]})
+                added += [block["id"] for block in reply.get("results", []) if block.get("id")]
+        except Exception:
+            for block_id in added:
+                try:
+                    self._call("DELETE", f"/blocks/{block_id}")
+                except NotionError:
+                    pass  # the original error is the one to report
+            raise
+
+
+def _options(colors: dict) -> dict:
+    return {"select": {"options": [{"name": str(name), "color": color} for name, color in colors.items()]}}
+
+
+def _schema(assignees: list[str]) -> dict:
+    return {"Name": {"title": {}}, "Stage": _options(STAGE_COLORS),
+            "Assignee": _options({name: "default" for name in assignees}), "Revision note": {"rich_text": {}},
+            "Schedule": _options(SCHEDULE_COLORS), "Due": {"date": {}}, "Archive": {"checkbox": {}}}
+
+
+def _find_human(call: Callable[..., dict], given: str | None) -> str:
+    if given:
+        return given
+    people, path = [], "/users?page_size=100"
+    while True:
+        reply = call("GET", path)
+        people += [user for user in reply.get("results", []) if user.get("type") == "person"]
+        if not reply.get("has_more"):
+            break
+        path = f"/users?page_size=100&start_cursor={reply['next_cursor']}"
+    if len(people) != 1:
+        listing = "\n".join(f"  {user['id']} {user.get('name', '')}" for user in people)
+        raise SetupError(f"Found {len(people)} people in this workspace; choose one with --human-user:\n{listing}")
+    return people[0]["id"]
+
+
+def _create_board_view(call: Callable[..., dict], database_id: str) -> None:
+    """Add the kanban view and remove Notion's default table. Only ever called on a database created by init."""
+    database = call("GET", f"/databases/{database_id}", version=NOTION_VIEWS_VERSION)
+    source = database["data_sources"][0]["id"]
+    fields = call("GET", f"/data_sources/{source}", version=NOTION_VIEWS_VERSION)["properties"]
+    old = call("GET", f"/views?database_id={database_id}", version=NOTION_VIEWS_VERSION).get("results", [])
+    visible = ("Card No", "Assignee", "Schedule", "Due")
+    configuration = {"type": "board",
+                     "group_by": {"type": "select", "property_id": fields["Stage"]["id"], "sort": {"type": "manual"}},
+                     "properties": [{"property_id": field["id"], "visible": name in visible}
+                                    for name, field in fields.items() if name != "Name"]}
+    call("POST", "/views", {"database_id": database_id, "data_source_id": source, "type": "board", "name": "Board",
+                            "configuration": configuration, "filter": NOT_ARCHIVED}, version=NOTION_VIEWS_VERSION)
+    for view_ in old:
+        call("DELETE", f"/views/{view_['id']}", version=NOTION_VIEWS_VERSION)
+
+
+def _toml_text(value: str) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def config_text(database_id: str, human_id: str, bot_id: str, agents: list[str], me: str, human: str,
+                token_env: str) -> str:
+    lines = ['mode = "dry-run"  # dry-run | live | off', f"me = {_toml_text(me)}  # this machine's agent", "",
+             "[board]", f"database_id = {_toml_text(database_id)}", f"token_env = {_toml_text(token_env)}",
+             f"human_id = {_toml_text(human_id)}", f"bot_id = {_toml_text(bot_id)}"]
+    for name in agents:
+        lines += ["", "[[agents]]", f"name = {_toml_text(name)}", 'workdir = "~/work"', 'sandbox = "strict"', "max_jobs = 3"]
+    lines += ["", "[[humans]]", f"name = {_toml_text(human)}"]
+    return "\n".join(lines) + "\n"
+
+
+def init_board(token: str, parent: str, agents: list[str], human: str, title: str, human_user: str | None = None,
+               request: Callable[..., dict] = notion_request) -> dict:
+    """Create the board and return the ids a config needs. The board view is a convenience: failing it is not fatal."""
+
+    def call(*args, **kwargs) -> dict:
+        return request(token, *args, **kwargs)
+
+    bot_id = call("GET", "/users/me").get("id")
+    human_id = _find_human(call, human_user)
+    database = call("POST", "/databases", {"parent": {"type": "page_id", "page_id": parent},
+                                           "title": _rich_text(title), "properties": _schema([*agents, human])})
+    warnings = []
+    try:
+        call("PATCH", f"/databases/{database['id']}", {"properties": {"Card No": {"unique_id": {"prefix": "CARD"}}}})
+    except NotionError as error:
+        warnings.append(f"Card No field not added ({error.code}); cards use a short id instead")
+    try:
+        _create_board_view(call, database["id"])
+    except (NotionError, KeyError, IndexError) as error:
+        warnings.append(f"Board view not created ({error}); add one grouped by Stage in Notion")
+    return {"database_id": database["id"], "url": database.get("url", ""), "human_id": human_id, "bot_id": bot_id,
+            "warnings": warnings}
+
+
+def load_config(path: Path) -> tuple[dict, Policy]:
+    try:
+        config = tomllib.loads(path.read_text())
+    except FileNotFoundError:
+        raise SetupError(f"{path} not found. Run: python3 boardrunner.py init --parent <page-id> --agent <name>") from None
+    except tomllib.TOMLDecodeError as error:
+        raise SetupError(f"{path}: {error}") from None
+    board = config.get("board") or {}
+    agents = {agent["name"]: agent for agent in config.get("agents", [])}
+    me = config.get("me")
+    if me not in agents:
+        raise SetupError(f"{path}: me = {me!r} is not one of the agents: {', '.join(agents) or 'none'}")
+    missing = [name for name in ("database_id", "human_id", "bot_id") if not board.get(name)]
+    if missing:
+        raise SetupError(f"{path}: [board] is missing {', '.join(missing)}")
+    peers = frozenset(agents) - {me}
+    policy = Policy(me=me, human_id=board["human_id"], bot_id=board["bot_id"], peers=peers,
+                    humans=frozenset(human["name"] for human in config.get("humans", [])),
+                    peer_bot_ids=frozenset(board.get("peer_bot_ids", [])), primary=config.get("primary", True),
+                    max_jobs=agents[me].get("max_jobs", 3), timezone=config.get("timezone", "UTC"))
+    return config, policy
+
+
+def _token(name: str) -> str:
+    token = os.environ.get(name, "")
+    if not token:
+        raise SetupError(f"Set your Notion integration token in the {name} environment variable")
+    return token
+
+
+def _cmd_init(args) -> int:
+    path = Path(args.config)
+    if path.exists():
+        raise SetupError(f"{path} already exists, so this machine has a board. Remove it to create another.")
+    agents = args.agent
+    if args.human in agents or len(set(agents)) != len(agents):
+        raise SetupError("Agent and human names must be different from each other")
+    created = init_board(_token(args.token_env), args.parent, agents, args.human, args.title, args.human_user)
+    path.write_text(config_text(created["database_id"], created["human_id"], created["bot_id"], agents, agents[0],
+                                args.human, args.token_env))
+    print(f"Board created: {created['url'] or created['database_id']}")
+    print(f"Config written: {path} (mode: dry-run)")
+    for warning in created["warnings"]:
+        print(f"Warning: {warning}")
+    return 0
+
+
+def _cmd_dry_run(args) -> int:
+    config, policy = load_config(Path(args.config))
+    board = config["board"]
+    notion = NotionBoard(_token(board.get("token_env", "NOTION_TOKEN")), board["database_id"])
+    log = run_pass(notion, None, State(), policy, datetime.now(ZoneInfo(policy.timezone)), dry_run=True)
+    print("\n".join(log) or "Nothing to do.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="boardrunner", description="Run AI coding agents from a kanban board.")
     parser.add_argument("--version", action="version", version=__version__)
-    parser.parse_args(argv)
-    parser.print_help()
-    return 0
+    parser.add_argument("--config", default="boardrunner.toml")
+    commands = parser.add_subparsers(dest="command")
+    init = commands.add_parser("init", help="create the board in Notion and write the config")
+    init.add_argument("--parent", required=True, help="id of a Notion page shared with your integration")
+    init.add_argument("--agent", action="append", required=True, help="agent name; repeat for more agents")
+    init.add_argument("--human", default="me", help="the Assignee value meaning you do the work yourself")
+    init.add_argument("--human-user", help="your Notion user id, needed when the workspace has several people")
+    init.add_argument("--title", default="BoardRunner")
+    init.add_argument("--token-env", default="NOTION_TOKEN")
+    init.set_defaults(handler=_cmd_init)
+    dry_run = commands.add_parser("dry-run", help="show what would happen on the board; changes nothing")
+    dry_run.set_defaults(handler=_cmd_dry_run)
+    args = parser.parse_args(argv)
+    if not args.command:
+        parser.print_help()
+        return 0
+    try:
+        return args.handler(args)
+    except SetupError as error:
+        print(error, file=sys.stderr)
+        return 2
+    except NotionError as error:
+        print(f"Notion error: {error}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

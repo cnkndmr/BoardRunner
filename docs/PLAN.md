@@ -1,4 +1,4 @@
-# BoardRunner plan (v0.4)
+# BoardRunner plan (v0.5)
 
 Goal: anyone with a Notion account and an agent CLI can go from zero to a first finished card in about 15 minutes, on their own machines, with their own agent names.
 
@@ -24,7 +24,7 @@ The core makes decisions and touches nothing. Everything that touches the outsid
 | Part | Job | First implementation |
 | --- | --- | --- |
 | Core | Card state machine, tested with a fake board and runner | Done (M1) |
-| Board | Read cards, write fields and body, create the schema | Notion REST API, standard library only |
+| Board | Read cards, write fields and body, create the schema | Done (M2): Notion REST API, standard library only |
 | Runner | Start, watch and stop a detached agent process | `claude -p` |
 | Sandbox | Limit network and writes | Per platform, `strict` by default |
 | Notifier | One-line event messages | `none` |
@@ -66,3 +66,4 @@ The core makes decisions and touches nothing. Everything that touches the outsid
 - 2026-11-01 v0.2: licence decided: MIT.
 - 2026-11-01 v0.3: same behaviour for every agent; only the environment differs.
 - 2026-11-01 v0.4: single file decided; M1 done on a fake board and runner.
+- 2026-11-01 v0.5: M2 done: Notion board, config, `init`, `dry-run`; tried on a real workspace. Plain text only on cards so far.

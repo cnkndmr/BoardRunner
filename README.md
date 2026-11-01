@@ -2,7 +2,7 @@
 
 Run AI coding agents from a kanban board. Open a card, choose who does the work; the agent writes a plan on the card, waits for your approval, does the job and reports back on the same card.
 
-> **Status: early. Not usable yet:** the card logic works against a fake board, and Notion and real agents are next ([plan](docs/PLAN.md)). The design comes from a private setup that runs daily.
+> **Status: early. Not usable yet:** the board can be created and read in Notion, but agents do not run yet ([plan](docs/PLAN.md)). The design comes from a private setup that runs daily.
 
 ```mermaid
 flowchart LR
@@ -24,6 +24,19 @@ flowchart LR
 | | Writes the result on the card when the job ends |
 
 The board is the only hub: machines never talk to each other, each one handles only its own cards. If one is off, the others keep working.
+
+## Try the setup
+
+1. Create an integration at <https://www.notion.so/my-integrations> and share a page with it.
+2. Run:
+
+```sh
+export NOTION_TOKEN=...
+python3 boardrunner.py init --parent <page-id> --agent laptop --agent server
+python3 boardrunner.py dry-run
+```
+
+`init` creates the board and writes `boardrunner.toml`. `dry-run` shows what would happen and changes nothing.
 
 ## Development
 
