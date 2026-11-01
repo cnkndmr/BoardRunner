@@ -1,7 +1,9 @@
 import pytest
 
-from boardrunner import (NotionBoard, NotionError, SetupError, Schedule, Stage, card_from_page, config_text, init_board,
-                         load_config, main)
+from pathlib import Path
+
+from boardrunner import (NotionBoard, NotionError, SetupError, Schedule, Stage, _same_start, _token, card_from_page,
+                         config_text, doctor_checks, init_board, load_config, main, service_files, text_blocks)
 
 
 def page(**props):
@@ -50,6 +52,30 @@ def test_write_maps_fields_and_rejects_unknown():
     assert api.calls[0][2]["properties"] == {"Stage": {"select": {"name": "Done"}}, "Revision note": {"rich_text": []}}
     with pytest.raises(ValueError):
         board.write("c", nonsense=1)
+
+
+def test_body_keeps_human_text_only_and_reads_nested_blocks():
+    def block(id_, text, by, children=False):
+        return {"id": id_, "type": "paragraph", "paragraph": {"rich_text": [{"plain_text": text}]},
+                "created_by": {"id": by}, "has_children": children}
+
+    api = Api({("GET", "/blocks/c/children"): {"results": [block("1", "mine", "h", True), block("2", "the plan", "bot")]},
+               ("GET", "/blocks/1/children"): {"results": [block("3", "nested", "h")]}})
+    assert NotionBoard("t", "db", api, bot_id="bot").read_body("c") == "mine\nnested"
+
+
+def test_markdown_becomes_notion_blocks():
+    blocks = text_blocks("# Title\n\n- one **bold** `code`\n2. two\n```\nx = *1*\n```\nplain **")
+    assert [b["type"] for b in blocks] == ["heading_1", "bulleted_list_item", "numbered_list_item", "code", "paragraph"]
+    parts = blocks[1]["bulleted_list_item"]["rich_text"]
+    assert [p["text"]["content"] for p in parts] == ["one ", "bold", " ", "code"]
+    assert parts[1]["annotations"] == {"bold": True} and parts[3]["annotations"] == {"code": True}
+    assert blocks[3]["code"]["rich_text"][0]["text"]["content"] == "x = *1*"
+    assert blocks[4]["paragraph"]["rich_text"][0]["text"]["content"] == "plain **"
+
+
+def test_unclosed_code_fence_keeps_the_text():
+    assert text_blocks("```\nkept")[0]["code"]["rich_text"][0]["text"]["content"] == "kept"
 
 
 def test_long_text_is_split_within_notion_limits():
@@ -122,3 +148,58 @@ def test_missing_token_is_explained(tmp_path, capsys, monkeypatch):
     monkeypatch.delenv("NOTION_TOKEN", raising=False)
     assert main(["--config", str(tmp_path / "c.toml"), "init", "--parent", "p", "--agent", "a"]) == 2
     assert "NOTION_TOKEN" in capsys.readouterr().err
+
+
+def doctor_setup(tmp_path, human="h"):
+    path = tmp_path / "c.toml"
+    (tmp_path / "work").mkdir()
+    path.write_text(config_text("db", human, "bot", ["laptop", "server"], "laptop", "me", "NOTION_TOKEN").replace(
+        '"~/work"', f'"{tmp_path}/work"').replace('sandbox = "strict"', f'sandbox = "off"\nclaude_path = "/bin/echo"'))
+    return load_config(path)
+
+
+def good_db():
+    props = {name: {} for name in ("Stage", "Schedule", "Due", "Revision note", "Archive")}
+    props["Assignee"] = {"select": {"options": [{"name": "laptop"}, {"name": "server"}]}}
+    return {"properties": props}
+
+
+def test_doctor_passes_on_a_good_setup(tmp_path):
+    config, policy = doctor_setup(tmp_path)
+    api = Api({("GET", "/users/me"): {"id": "bot"}, ("GET", "/databases/db"): good_db()})
+    assert all(ok for ok, _ in doctor_checks(config, policy, "t", api))
+
+
+def test_doctor_names_each_problem(tmp_path):
+    config, policy = doctor_setup(tmp_path, human="bot")
+    db = good_db()
+    del db["properties"]["Stage"]
+    db["properties"]["Assignee"]["select"]["options"].pop()
+    api = Api({("GET", "/users/me"): {"id": "other"}, ("GET", "/databases/db"): db})
+    failed = " | ".join(text for ok, text in doctor_checks(config, policy, "t", api) if not ok)
+    for phrase in ("does not match", "Stage", "server", "human_id equals bot_id"):
+        assert phrase in failed
+
+
+def test_doctor_survives_notion_being_down(tmp_path):
+    config, policy = doctor_setup(tmp_path)
+    assert any(not ok and "Notion" in text for ok, text in doctor_checks(config, policy, "t", Api(fail_on=lambda *_: True)))
+
+
+def test_service_files_repeat_one_pass():
+    linux = service_files("linux", "/py", Path("/a/boardrunner.py"), Path("/a/c.toml"))
+    assert "ExecStart=/py /a/boardrunner.py --config /a/c.toml run --once" in linux["boardrunner.service"]
+    assert "KillMode=process" in linux["boardrunner.service"]
+    assert "OnUnitActiveSec=60" in linux["boardrunner.timer"]
+    mac = service_files("darwin", "/py", Path("/a/boardrunner.py"), Path("/a/c.toml"))
+    assert "<integer>60</integer>" in mac["com.boardrunner.plist"]
+
+
+def test_token_from_a_file_beside_the_config(tmp_path, monkeypatch):
+    monkeypatch.delenv("NOTION_TOKEN", raising=False)
+    (tmp_path / ".env").write_text('NOTION_TOKEN="abc"\n')
+    assert _token("NOTION_TOKEN", tmp_path / "c.toml") == "abc"
+
+
+def test_start_time_comparison():
+    assert _same_start("x", "x") and not _same_start(None, None) and not _same_start("x", None)

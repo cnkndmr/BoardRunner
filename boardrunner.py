@@ -16,6 +16,7 @@ import fcntl
 import http.client
 import json
 import os
+import re
 import shutil
 import signal
 import socket
@@ -417,6 +418,7 @@ class Board(Protocol):
     def list_cards(self) -> list[Card]: ...
     def write(self, card_id: str, **fields) -> None: ...
     def append(self, card_id: str, text: str) -> None: ...
+    def read_body(self, card_id: str) -> str: ...  # text the human wrote inside the card
 
 
 class Runner(Protocol):
@@ -437,11 +439,12 @@ def _card_block(text: str) -> str:
     return f"<<<CARD\n{text}\nCARD>>>"
 
 
-def plan_prompt(card: Card, record: dict) -> str:
+def plan_prompt(card: Card, record: dict, body: str = "") -> str:
+    details = f"\nDetails: {body}" if body.strip() else ""
     notes = "".join(f"\nRevision note: {note}" for note in record.get("revisions", []))
     return ("Write a short plan for this task: what you will do, why, and how to tell it is finished. Do not do the work. "
             "You may read files. If the task is unclear, reply with one question instead of guessing. "
-            f"Reply with the plan only.\n\n{UNTRUSTED}\n{_card_block(f'Task: {card.title}{notes}')}\n")
+            f"Reply with the plan only.\n\n{UNTRUSTED}\n{_card_block(f'Task: {card.title}{details}{notes}')}\n")
 
 
 def job_prompt(card: Card, plan: str) -> str:
@@ -525,8 +528,8 @@ def _apply(action: Action, reason: str, card: Card, board: Board, runner: Runner
         if card.stage != Stage.PLANNING:  # first, or the next pass would read "Inbox" as the draft being pulled back
             move(Stage.PLANNING)
         try:
-            state.drafts[card.id] = {"handle": runner.start("plan", card, plan_prompt(card, record))}
-        except (OSError, SetupError):
+            state.drafts[card.id] = {"handle": runner.start("plan", card, plan_prompt(card, record, board.read_body(card.id)))}
+        except (OSError, SetupError, NotionError):
             record["attempts"] = record.get("attempts", 0) + 1
             record["retry_at"] = now.timestamp() + RETRY_SECONDS * record["attempts"]
             raise
@@ -701,15 +704,65 @@ def _rich_text(text: str) -> list[dict]:
     return [{"type": "text", "text": {"content": piece}} for piece in pieces[:100]]
 
 
+INLINE = re.compile(r"\*\*(.+?)\*\*|`([^`]+)`")
+
+
+def _inline(text: str) -> list[dict]:
+    """Rich text for one line, with **bold** and `code`. Anything else stays literal."""
+    parts, position = [], 0
+
+    def plain(chunk: str, **annotations) -> None:
+        for piece in _rich_text(chunk):
+            parts.append({**piece, **({"annotations": annotations} if annotations else {})})
+
+    for match in INLINE.finditer(text):
+        if match.start() > position:
+            plain(text[position:match.start()])
+        if match.group(1) is not None:
+            plain(match.group(1), bold=True)
+        else:
+            plain(match.group(2), code=True)
+        position = match.end()
+    if position < len(text):
+        plain(text[position:])
+    return parts[:100]
+
+
+def _block(kind: str, rich_text: list[dict], **extra) -> dict:
+    return {"object": "block", "type": kind, kind: {"rich_text": rich_text, **extra}}
+
+
 def text_blocks(text: str) -> list[dict]:
-    """One paragraph block per line. Keeping Markdown formatting is left for later."""
-    return [{"object": "block", "type": "paragraph", "paragraph": {"rich_text": _rich_text(line)}}
-            for line in text.splitlines() if line.strip()]
+    """The Markdown agents actually write: headings, lists, code fences, bold and inline code."""
+    blocks, code = [], None
+    for line in text.splitlines():
+        if line.lstrip().startswith("```"):
+            if code is None:
+                code = []
+            else:
+                blocks.append(_block("code", _rich_text("\n".join(code)), language="plain text"))
+                code = None
+        elif code is not None:
+            code.append(line)
+        elif not line.strip():
+            continue
+        elif match := re.match(r"(#{1,3}) +(.*)", line):
+            blocks.append(_block(f"heading_{len(match.group(1))}", _inline(match.group(2))))
+        elif match := re.match(r"\s*[-*] +(.*)", line):
+            blocks.append(_block("bulleted_list_item", _inline(match.group(1))))
+        elif match := re.match(r"\s*\d+\. +(.*)", line):
+            blocks.append(_block("numbered_list_item", _inline(match.group(1))))
+        else:
+            blocks.append(_block("paragraph", _inline(line)))
+    if code is not None:  # an unclosed fence must not lose text
+        blocks.append(_block("code", _rich_text("\n".join(code)), language="plain text"))
+    return blocks
 
 
 class NotionBoard:
-    def __init__(self, token: str, database_id: str, request: Callable[..., dict] = notion_request):
-        self.token, self.database_id, self._request = token, database_id, request
+    def __init__(self, token: str, database_id: str, request: Callable[..., dict] = notion_request,
+                 bot_id: str | None = None):
+        self.token, self.database_id, self._request, self.bot_id = token, database_id, request, bot_id
 
     def _call(self, *args, **kwargs) -> dict:
         return self._request(self.token, *args, **kwargs)
@@ -722,6 +775,9 @@ class NotionBoard:
             if not reply.get("has_more"):
                 return [card_from_page(page) for page in pages]
             body = {**body, "start_cursor": reply["next_cursor"]}
+
+    def read_body(self, card_id: str) -> str:
+        return "\n".join(_body_lines(self, card_id, 3))
 
     def write(self, card_id: str, **fields) -> None:
         props = {}
@@ -750,6 +806,23 @@ class NotionBoard:
                 except NotionError:
                     pass  # the original error is the one to report
             raise
+
+
+def _body_lines(board: NotionBoard, block_id: str, depth: int) -> list[str]:
+    lines, path = [], f"/blocks/{block_id}/children?page_size=100"
+    while True:
+        reply = board._call("GET", path)
+        for block in reply.get("results", []):
+            if (block.get("created_by") or {}).get("id") != board.bot_id:  # plans and reports must not feed back in
+                content = block.get(block.get("type"), {})
+                text = "".join(part.get("plain_text", "") for part in content.get("rich_text") or [])
+                if text.strip():
+                    lines.append(text)
+                if block.get("has_children") and depth > 1:
+                    lines += _body_lines(board, block["id"], depth - 1)
+        if not reply.get("has_more"):
+            return lines
+        path = f"/blocks/{block_id}/children?page_size=100&start_cursor={reply['next_cursor']}"
 
 
 def _options(colors: dict) -> dict:
@@ -857,10 +930,17 @@ def load_config(path: Path) -> tuple[dict, Policy]:
     return config, policy
 
 
-def _token(name: str) -> str:
+def _token(name: str, config_path: Path | None = None) -> str:
+    """From the environment, or from a `.env` beside the config, which is what a scheduled service uses."""
     token = os.environ.get(name, "")
+    if not token and config_path:
+        env_file = config_path.resolve().parent / ".env"
+        if env_file.exists():
+            for line in env_file.read_text().splitlines():
+                if line.startswith(f"{name}="):
+                    token = line.split("=", 1)[1].strip().strip('"')
     if not token:
-        raise SetupError(f"Set your Notion integration token in the {name} environment variable")
+        raise SetupError(f"Set your Notion integration token in the {name} environment variable, or in a .env beside the config")
     return token
 
 
@@ -893,6 +973,19 @@ def _process_start(pid: int) -> str | None:
     except (OSError, subprocess.SubprocessError):
         return None
     return done.stdout.strip() or None
+
+
+def _same_start(first: str | None, second: str | None) -> bool:
+    """Linux derives the start time from the boot time, so it drifts when the clock is adjusted."""
+    if first == second or not first or not second:
+        return first == second and first is not None
+    if not sys.platform.startswith("linux"):
+        return False
+    pattern = "%a %b %d %H:%M:%S %Y"
+    try:
+        return abs((datetime.strptime(first, pattern) - datetime.strptime(second, pattern)).total_seconds()) <= 300
+    except ValueError:
+        return False
 
 
 class ClaudeRunner:
@@ -953,7 +1046,7 @@ class ClaudeRunner:
 
     def _alive(self, meta: dict) -> bool:
         pid = meta.get("pid")
-        return bool(pid) and _process_start(pid) == meta.get("started")
+        return bool(pid) and _same_start(_process_start(pid), meta.get("started"))
 
     def status(self, handle: str) -> str:
         exit_file = Path(handle) / "exit_code"
@@ -1028,7 +1121,8 @@ def _cmd_run(args) -> int:
         print("Mode is off.")
         return 0
     board_config = config["board"]
-    board = NotionBoard(_token(board_config.get("token_env", "NOTION_TOKEN")), board_config["database_id"])
+    board = NotionBoard(_token(board_config.get("token_env", "NOTION_TOKEN"), path), board_config["database_id"],
+                        bot_id=board_config["bot_id"])
     now = datetime.now(ZoneInfo(policy.timezone))
     if mode == "dry-run":
         print("\n".join(run_pass(board, None, State(), policy, now, dry_run=True)) or "Nothing to do.")
@@ -1049,6 +1143,108 @@ def _cmd_run(args) -> int:
     return 0
 
 
+def _sandbox_missing() -> list[str]:
+    tools = ["sandbox-exec"] if sys.platform == "darwin" else ["bwrap", "socat"]
+    return [tool for tool in tools if not shutil.which(tool)]
+
+
+def doctor_checks(config: dict, policy: Policy, token: str, request: Callable[..., dict] = notion_request) -> list[tuple[bool, str]]:
+    """Each check is (passed, what to know). Later checks still run after a failure, so one run shows everything."""
+    agent = _agent(config)
+    results = []
+    workdir = Path(agent.get("workdir", "~/work")).expanduser()
+    results.append((workdir.is_dir(), f"work folder {workdir}"))
+    binary = agent.get("claude_path") or shutil.which("claude")
+    results.append((bool(binary) and bool(shutil.which(binary)), f"Claude Code: {binary or 'not found'}"))
+    if agent.get("sandbox", "strict") == "strict":
+        missing = _sandbox_missing()
+        results.append((not missing, "sandbox tools present" if not missing else
+                        f"sandbox tools missing: {', '.join(missing)}. Jobs would refuse to start."))
+    else:
+        results.append((True, "sandbox is off: jobs can reach the network and write anywhere you can"))
+    try:
+        me = request(token, "GET", "/users/me")
+        results.append((me.get("id") == policy.bot_id, "Notion token belongs to the configured integration"
+                        if me.get("id") == policy.bot_id else "Notion token does not match bot_id in the config"))
+        props = request(token, "GET", f"/databases/{config['board']['database_id']}").get("properties", {})
+        missing = [name for name in ("Stage", "Assignee", "Schedule", "Due", "Revision note", "Archive") if name not in props]
+        results.append((not missing, "board fields present" if not missing else f"board fields missing: {', '.join(missing)}"))
+        options = {o.get("name") for o in (props.get("Assignee", {}).get("select") or {}).get("options", [])}
+        missing = [a["name"] for a in config["agents"] if a["name"] not in options]
+        results.append((not missing, "every agent can be chosen on the board" if not missing else
+                        f"add to Assignee on the board: {', '.join(missing)}"))
+    except NotionError as error:
+        results.append((False, f"Notion: {error}"))
+    results.append((policy.human_id != policy.bot_id, "human and integration are different users" if
+                    policy.human_id != policy.bot_id else "human_id equals bot_id: nothing would count as human approval"))
+    return results
+
+
+def _cmd_doctor(args) -> int:
+    path = Path(args.config)
+    config, policy = load_config(path)
+    checks = doctor_checks(config, policy, _token(config["board"].get("token_env", "NOTION_TOKEN"), path))
+    for passed, text in checks:
+        print(f"{'ok  ' if passed else 'FAIL'} {text}")
+    print(f"     mode: {config.get('mode', 'dry-run')}")
+    return 0 if all(passed for passed, _ in checks) else 1
+
+
+def service_files(platform: str, python: str, script: Path, config: Path, seconds: int = 60) -> dict[str, str]:
+    """Scheduler files that repeat `run --once`. Nothing is installed: the user reads them first."""
+    workdir = config.parent
+    command = [python, str(script), "--config", str(config), "run", "--once"]
+    if platform == "darwin":
+        arguments = "\n".join(f"    <string>{part}</string>" for part in command)
+        return {"com.boardrunner.plist": f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.boardrunner</string>
+  <key>ProgramArguments</key><array>
+{arguments}
+  </array>
+  <key>WorkingDirectory</key><string>{workdir}</string>
+  <key>StartInterval</key><integer>{seconds}</integer>
+  <key>StandardOutPath</key><string>{workdir}/boardrunner.log</string>
+  <key>StandardErrorPath</key><string>{workdir}/boardrunner.log</string>
+</dict></plist>
+"""}
+    return {"boardrunner.service": f"""[Unit]
+Description=BoardRunner pass
+
+[Service]
+Type=oneshot
+WorkingDirectory={workdir}
+ExecStart={' '.join(command)}
+# Jobs are separate process groups and must outlive this pass.
+KillMode=process
+""", "boardrunner.timer": f"""[Unit]
+Description=BoardRunner every {seconds} seconds
+
+[Timer]
+OnBootSec=60
+OnUnitActiveSec={seconds}
+AccuracySec=5
+
+[Install]
+WantedBy=timers.target
+"""}
+
+
+def _cmd_service(args) -> int:
+    files = service_files(sys.platform, sys.executable, Path(__file__).resolve(), Path(args.config).resolve())
+    target = Path(args.output)
+    target.mkdir(parents=True, exist_ok=True)
+    for name, text in files.items():
+        (target / name).write_text(text)
+        print(target / name)
+    if sys.platform == "darwin":
+        print("Install: cp com.boardrunner.plist ~/Library/LaunchAgents/ && launchctl load ~/Library/LaunchAgents/com.boardrunner.plist")
+    else:
+        print("Install: cp boardrunner.* ~/.config/systemd/user/ && systemctl --user enable --now boardrunner.timer")
+    return 0
+
+
 def _cmd_init(args) -> int:
     path = Path(args.config)
     if path.exists():
@@ -1056,7 +1252,7 @@ def _cmd_init(args) -> int:
     agents = args.agent
     if args.human in agents or len(set(agents)) != len(agents):
         raise SetupError("Agent and human names must be different from each other")
-    created = init_board(_token(args.token_env), args.parent, agents, args.human, args.title, args.human_user)
+    created = init_board(_token(args.token_env, path), args.parent, agents, args.human, args.title, args.human_user)
     path.write_text(config_text(created["database_id"], created["human_id"], created["bot_id"], agents, agents[0],
                                 args.human, args.token_env))
     print(f"Board created: {created['url'] or created['database_id']}")
@@ -1069,7 +1265,8 @@ def _cmd_init(args) -> int:
 def _cmd_dry_run(args) -> int:
     config, policy = load_config(Path(args.config))
     board = config["board"]
-    notion = NotionBoard(_token(board.get("token_env", "NOTION_TOKEN")), board["database_id"])
+    notion = NotionBoard(_token(board.get("token_env", "NOTION_TOKEN"), Path(args.config)), board["database_id"],
+                         bot_id=board["bot_id"])
     log = run_pass(notion, None, State(), policy, datetime.now(ZoneInfo(policy.timezone)), dry_run=True)
     print("\n".join(log) or "Nothing to do.")
     return 0
@@ -1093,6 +1290,11 @@ def main(argv: list[str] | None = None) -> int:
     run = commands.add_parser("run", help="do one pass over the board, following the mode in the config")
     run.add_argument("--once", action="store_true", required=True, help="one pass; schedule it to repeat")
     run.set_defaults(handler=_cmd_run)
+    doctor = commands.add_parser("doctor", help="check this machine and the board")
+    doctor.set_defaults(handler=_cmd_doctor)
+    service = commands.add_parser("service", help="write scheduler files that repeat run --once; installs nothing")
+    service.add_argument("--output", default="service")
+    service.set_defaults(handler=_cmd_service)
     args = parser.parse_args(argv)
     if not args.command:
         parser.print_help()

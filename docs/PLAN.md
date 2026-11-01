@@ -1,4 +1,4 @@
-# BoardRunner plan (v0.6)
+# BoardRunner plan (v0.7)
 
 Goal: anyone with a Notion account and an agent CLI can go from zero to a first finished card in about 15 minutes, on their own machines, with their own agent names.
 
@@ -28,7 +28,7 @@ The core makes decisions and touches nothing. Everything that touches the outsid
 | Runner | Start, watch and stop a detached agent process | Done (M3): `claude -p` |
 | Sandbox | Limit network, writes and secret reads | Done (M3): Claude Code sandbox, `strict` by default; tried on macOS only |
 | Notifier | One-line event messages | `none` |
-| Scheduler | Run one pass per minute | `run --once` done; generated systemd and launchd files in M4 |
+| Scheduler | Run one pass per minute | Done (M4): `run --once` and generated systemd or launchd files; nothing is installed for you |
 
 ## Design rules
 
@@ -53,10 +53,10 @@ The core makes decisions and touches nothing. Everything that touches the outsid
 | M5 | Stranger test | Someone new reaches the first finished card from the README alone |
 | M6 | More runners and notifiers, public release | Decided after M5 |
 
-## Known gaps after M3
+## Known gaps after M4
 
-- The agent sees the card title and revision notes, not text written inside the card body.
-- Card text is written as plain paragraphs, so Markdown formatting shows as raw characters.
+- Two runners were tested as separate processes on one Mac. Two real machines, and so Linux and systemd, are still untested.
+- Service files were generated and validated, but never installed. On macOS, launchd cannot reach `~/Documents`, so keep the config elsewhere.
 - Linux is untested. The Claude Code sandbox needs `bwrap` there; `strict` refuses to run without it.
 - Real human approval was tested only with simulated edits, because an integration cannot act as a person.
 
@@ -75,3 +75,4 @@ The core makes decisions and touches nothing. Everything that touches the outsid
 - 2026-11-01 v0.4: single file decided; M1 done on a fake board and runner.
 - 2026-11-01 v0.5: M2 done: Notion board, config, `init`, `dry-run`; tried on a real workspace. Plain text only on cards so far.
 - 2026-11-01 v0.6: M3 done: real agent, sandbox, state file, `run --once`; a card went from plan to done on real Notion and Claude.
+- 2026-11-01 v0.7: M4 mostly done: card body, Markdown, `doctor`, `service`, two runners on one board. Two real machines still open.
