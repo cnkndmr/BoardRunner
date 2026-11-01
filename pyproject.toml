@@ -1,0 +1,20 @@
+[project]
+name = "boardrunner"
+version = "0.0.1"
+description = "Run AI coding agents from a kanban board: plan on the card, approve, execute, report back."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+boardrunner = "boardrunner.__main__:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

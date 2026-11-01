@@ -1,0 +1,23 @@
+# Draft of the target configuration (not read by any code yet, see docs/PLAN.md).
+# Copy to boardrunner.toml. Secrets stay in environment variables.
+
+mode = "dry-run"          # dry-run | live | off
+poll_seconds = 60
+
+[board]
+adapter = "notion"
+database_id = "<notion-database-id>"
+token_env = "NOTION_TOKEN"
+
+[[assignees]]
+name = "laptop-agent"     # value of the card's Assignee field
+runner = "claude-code"    # the CLI that does the work
+workdir = "~/work"
+sandbox = "strict"        # no network, writes only inside the job folder
+
+[[assignees]]
+name = "me"               # a human: no agent runs
+runner = "none"
+
+[notify]
+adapter = "none"          # none | telegram | slack | webhook
