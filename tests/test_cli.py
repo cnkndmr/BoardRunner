@@ -1,4 +1,4 @@
-from boardrunner.__main__ import main
+from boardrunner import main
 
 
 def test_cli_runs_without_arguments():

@@ -1,6 +1,7 @@
-"""Card state machine: for one card, decide the next action.
+"""BoardRunner: run AI coding agents from a kanban board. Single file, standard library only.
 
-No network, process or file access happens here. The only side effect is on the `State` passed in.
+The state machine (`decide`) touches no network, process or file; its only side effect is on `State`.
+`run_pass` applies its decisions through two small interfaces, `Board` and `Runner`.
 Three rules shape the order of the checks in `decide`:
 
 1. Ownership comes first, so another agent's card never fails or loses its note here.
@@ -10,12 +11,15 @@ Three rules shape the order of the checks in `decide`:
 
 from __future__ import annotations
 
+import argparse
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from hashlib import sha256
-from typing import Callable
+from typing import Callable, Protocol
 from zoneinfo import ZoneInfo
+
+__version__ = "0.0.1"
 
 
 class Stage(StrEnum):
@@ -391,5 +395,157 @@ def _clock(timestamp: float, policy: Policy) -> str:
     return f"{datetime.fromtimestamp(timestamp, ZoneInfo(policy.timezone)):%H:%M}"
 
 
-__all__ = ["Action", "Card", "Policy", "Schedule", "Stage", "State", "decide", "human_approved", "is_due",
-           "record_bot_write", "text_hash", "view"]
+RETRY_SECONDS = 600
+RUNNING_STATUS = "running"
+
+
+class Board(Protocol):
+    def list_cards(self) -> list[Card]: ...
+    def write(self, card_id: str, **fields) -> None: ...
+    def append(self, card_id: str, text: str) -> None: ...
+
+
+class Runner(Protocol):
+    def start(self, kind: str, card: Card, prompt: str) -> str: ...
+    def status(self, handle: str) -> str: ...  # running | done | failed
+    def result(self, handle: str) -> str: ...
+    def stop(self, handle: str) -> None: ...
+
+
+def plan_prompt(card: Card, record: dict) -> str:
+    notes = "".join(f"\nRevision note: {note}" for note in record.get("revisions", []))
+    return f"Write a plan for this task. Do not do the work yet.\nTask: {card.title}{notes}"
+
+
+def job_prompt(card: Card, plan: str) -> str:
+    return f"Do this task by following the approved plan.\nTask: {card.title}\nPlan:\n{plan}"
+
+
+def _clear_plan(record: dict) -> None:
+    for name in (*DRAFT_FLAGS, "plan", "attempts"):
+        record.pop(name, None)
+
+
+def _collect(cards: dict[str, Card], board: Board, runner: Runner, state: State, policy: Policy, now: datetime,
+             persist: Callable[[State], None]) -> list[str]:
+    """Harvest finished drafts and jobs. A card a human moved meanwhile keeps its stage."""
+    log = []
+    for card_id, draft in list(state.drafts.items()):
+        status = runner.status(draft["handle"])
+        if status == RUNNING_STATUS:
+            continue
+        del state.drafts[card_id]
+        record = state.record(card_id)
+        card = cards.get(card_id)
+        if status != "done":
+            record["attempts"] = record.get("attempts", 0) + 1
+            record["retry_at"] = now.timestamp() + RETRY_SECONDS * record["attempts"]
+            log.append(f"{card_id}: draft failed")
+        elif card and card.stage == Stage.PLANNING and card.assignee == policy.me:
+            plan = runner.result(draft["handle"])
+            record.update(plan=plan, plan_hash=text_hash(plan), plan_collected=True)
+            record.pop("attempts", None)
+            board.append(card_id, plan)
+            record_bot_write(card, state, policy, board.write, persist, stage=Stage.PLAN_READY)
+            log.append(f"{card_id}: plan ready")
+        persist(state)
+    for card_id, job in list(state.jobs.items()):
+        status = runner.status(job["handle"])
+        if status == RUNNING_STATUS:
+            continue
+        del state.jobs[card_id]
+        card = cards.get(card_id)
+        if not job.get("stopping") and card:
+            board.append(card_id, runner.result(job["handle"]))
+            final = Stage.DONE if status == "done" else Stage.FAILED
+            record_bot_write(card, state, policy, board.write, persist, stage=final)
+            log.append(f"{card_id}: {final}")
+        persist(state)
+    return log
+
+
+def _apply(action: Action, reason: str, card: Card, board: Board, runner: Runner, state: State, policy: Policy,
+           persist: Callable[[State], None]) -> None:
+    record = state.record(card.id)
+
+    def move(stage: Stage, **fields) -> None:
+        record_bot_write(card, state, policy, board.write, persist, stage=stage, **fields)
+
+    def cancel_draft() -> None:
+        draft = state.drafts.pop(card.id, None)
+        if draft:
+            runner.stop(draft["handle"])
+
+    if action == Action.WARN:
+        if record.get("warned") != reason:
+            record["warned"] = reason
+            board.append(card.id, f"BoardRunner: {reason}")
+    elif action == Action.DRAFT:
+        state.drafts[card.id] = {"handle": runner.start("plan", card, plan_prompt(card, record))}
+        persist(state)
+        if card.stage != Stage.PLANNING:
+            move(Stage.PLANNING)
+    elif action == Action.CANCEL_DRAFT:
+        cancel_draft()
+    elif action == Action.DRAFT_BACK:
+        move(Stage.PLANNING)
+    elif action == Action.BACK_TO_PLAN:
+        _clear_plan(record)
+        move(Stage.PLANNING)
+    elif action == Action.DRAFT_FAILED:
+        record.pop("attempts", None)
+        board.append(card.id, "BoardRunner: the plan could not be written")
+        move(Stage.FAILED)
+    elif action == Action.REVISE:
+        cancel_draft()
+        record.setdefault("revisions", []).append(card.revision_note.strip())
+        _clear_plan(record)
+        move(Stage.PLANNING, note="")
+    elif action == Action.REVISE_CLOSED:
+        board.append(card.id, "BoardRunner: this job already finished. Open a new card for more work.")
+        record_bot_write(card, state, policy, board.write, persist, note="")
+    elif action == Action.START:
+        handle = runner.start("job", card, job_prompt(card, record.get("plan", "")))
+        state.jobs[card.id] = {"handle": handle, "status": "starting"}
+        persist(state)
+        move(Stage.RUNNING)
+        state.jobs[card.id]["status"] = RUNNING_STATUS
+    elif action == Action.CLAIM:
+        move(Stage.RUNNING)
+        state.jobs[card.id]["status"] = RUNNING_STATUS
+    elif action == Action.RECOVER:
+        board.append(card.id, "BoardRunner: no record of this job, marking it failed")
+        move(Stage.FAILED)
+    elif action in (Action.STOP, Action.STOP_REASSIGNED):
+        job = state.jobs[card.id]
+        job["stopping"] = True
+        runner.stop(job["handle"])
+    elif action == Action.HAND_TO_HUMAN:
+        move(Stage.FOR_HUMAN)
+    persist(state)
+
+
+def run_pass(board: Board, runner: Runner, state: State, policy: Policy, now: datetime, dry_run: bool = False,
+             persist: Callable[[State], None] = lambda _: None) -> list[str]:
+    """One pass over the board. In a dry run nothing is written and nothing starts."""
+    cards = {card.id: card for card in board.list_cards()}
+    log = [] if dry_run else _collect(cards, board, runner, state, policy, now, persist)
+    for card in cards.values():
+        action, reason = decide(card, state, policy, now, dry_run)
+        if action != Action.WAIT:
+            log.append(f"{card.id}: {action} ({reason})")
+            if not dry_run:
+                _apply(action, reason, card, board, runner, state, policy, persist)
+    return log
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="boardrunner", description="Run AI coding agents from a kanban board.")
+    parser.add_argument("--version", action="version", version=__version__)
+    parser.parse_args(argv)
+    parser.print_help()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

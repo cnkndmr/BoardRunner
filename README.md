@@ -2,7 +2,7 @@
 
 Run AI coding agents from a kanban board. Open a card, choose who does the work; the agent writes a plan on the card, waits for your approval, does the job and reports back on the same card.
 
-> **Status: early. Nothing runs yet.** This repository holds the skeleton and [the plan](docs/PLAN.md). The design comes from a private setup that runs daily.
+> **Status: early. Not usable yet:** the card logic works against a fake board, and Notion and real agents are next ([plan](docs/PLAN.md)). The design comes from a private setup that runs daily.
 
 ```mermaid
 flowchart LR
@@ -29,7 +29,7 @@ The board is the only hub: machines never talk to each other, each one handles o
 
 ```sh
 uv run pytest
-uv run boardrunner --version
+python3 boardrunner.py --version
 ```
 
 ## License

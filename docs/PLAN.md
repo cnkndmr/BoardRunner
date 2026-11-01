@@ -1,4 +1,4 @@
-# BoardRunner plan (v0.3)
+# BoardRunner plan (v0.4)
 
 Goal: anyone with a Notion account and an agent CLI can go from zero to a first finished card in about 15 minutes, on their own machines, with their own agent names.
 
@@ -23,7 +23,7 @@ The core makes decisions and touches nothing. Everything that touches the outsid
 
 | Part | Job | First implementation |
 | --- | --- | --- |
-| Core | Card state machine, pure and table-tested | Ported from the source system |
+| Core | Card state machine, tested with a fake board and runner | Done (M1) |
 | Board | Read cards, write fields and body, create the schema | Notion REST API, standard library only |
 | Runner | Start, watch and stop a detached agent process | `claude -p` |
 | Sandbox | Limit network and writes | Per platform, `strict` by default |
@@ -39,6 +39,7 @@ The core makes decisions and touches nothing. Everything that touches the outsid
 5. A job outlives the runner: restarting BoardRunner never kills or duplicates work.
 6. All agents behave the same. Any number of agents can share a board, and only their config differs: name, working folder, sandbox, parallel limit, extra instructions. Shared code never branches on an agent name or a platform name.
 7. Runtime dependencies stay at zero (Python standard library).
+8. The product is one file, `boardrunner.py`. Tests stay in the repository. v1 has one runner (Claude Code); new adapters must not push the file far past 3000 lines.
 
 ## Milestones
 
@@ -64,3 +65,4 @@ The core makes decisions and touches nothing. Everything that touches the outsid
 - 2026-11-01 v0.1: project opened, skeleton and plan written.
 - 2026-11-01 v0.2: licence decided: MIT.
 - 2026-11-01 v0.3: same behaviour for every agent; only the environment differs.
+- 2026-11-01 v0.4: single file decided; M1 done on a fake board and runner.

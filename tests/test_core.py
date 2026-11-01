@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from boardrunner.core import Action, Card, Policy, Schedule, Stage, State, decide, human_approved, record_bot_write
+from boardrunner import Action, Card, Policy, Schedule, Stage, State, decide, human_approved, record_bot_write
 
 NOW = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
 OLD = "2026-01-01T11:00:00Z"
