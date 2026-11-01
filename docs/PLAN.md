@@ -1,4 +1,4 @@
-# BoardRunner plan (v0.7)
+# BoardRunner plan (v0.8)
 
 Goal: anyone with a Notion account and an agent CLI can go from zero to a first finished card in about 15 minutes, on their own machines, with their own agent names.
 
@@ -55,9 +55,11 @@ The core makes decisions and touches nothing. Everything that touches the outsid
 
 ## Known gaps after M4
 
-- Two runners were tested as separate processes on one Mac. Two real machines, and so Linux and systemd, are still untested.
+- Two runners sharing one board were tested only as separate processes on one Mac. On Linux, the test suite, a real job, stopping a job and the sandbox refusal were tested, but not a shared board.
+- The Linux sandbox itself has not run: the test machine lacks `socat`, and `strict` correctly refused to start.
+- Generated systemd files passed `systemd-analyze verify`, but were never installed.
 - Service files were generated and validated, but never installed. On macOS, launchd cannot reach `~/Documents`, so keep the config elsewhere.
-- Linux is untested. The Claude Code sandbox needs `bwrap` there; `strict` refuses to run without it.
+- The Claude Code sandbox needs `bwrap` and `socat` on Linux; `strict` refuses to run without them.
 - Real human approval was tested only with simulated edits, because an integration cannot act as a person.
 
 ## Open decisions
@@ -76,3 +78,4 @@ The core makes decisions and touches nothing. Everything that touches the outsid
 - 2026-11-01 v0.5: M2 done: Notion board, config, `init`, `dry-run`; tried on a real workspace. Plain text only on cards so far.
 - 2026-11-01 v0.6: M3 done: real agent, sandbox, state file, `run --once`; a card went from plan to done on real Notion and Claude.
 - 2026-11-01 v0.7: M4 mostly done: card body, Markdown, `doctor`, `service`, two runners on one board. Two real machines still open.
+- 2026-11-02 v0.8: Linux checks; relative paths fixed; `doctor` hints at sharing the board.

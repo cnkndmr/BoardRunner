@@ -992,12 +992,12 @@ class ClaudeRunner:
     """Runs Claude Code as a detached process group, so a job outlives this program. A handle is the job's folder."""
 
     def __init__(self, agent: dict, state_dir: Path, home: Path | None = None):
-        self.workdir = Path(agent.get("workdir", "~/work")).expanduser()
+        self.workdir = Path(agent.get("workdir", "~/work")).expanduser().resolve()
         self.sandbox = agent.get("sandbox", "strict")
         self.model = agent.get("model")
         self.instructions = agent.get("instructions", "")
         self.max_seconds = int(agent.get("max_minutes", 360)) * 60
-        self.jobs_dir = state_dir / "jobs"
+        self.jobs_dir = state_dir.resolve() / "jobs"  # the job starts in its own folder, so a relative path would break
         self.home = home or Path.home()
         self.binary = agent.get("claude_path") or shutil.which("claude") or "claude"
         if self.sandbox not in ("strict", "off"):
@@ -1174,7 +1174,8 @@ def doctor_checks(config: dict, policy: Policy, token: str, request: Callable[..
         results.append((not missing, "every agent can be chosen on the board" if not missing else
                         f"add to Assignee on the board: {', '.join(missing)}"))
     except NotionError as error:
-        results.append((False, f"Notion: {error}"))
+        hint = " Share the board with this machine's integration in Notion." if error.code == 404 else ""
+        results.append((False, f"Notion: {error}{hint}"))
     results.append((policy.human_id != policy.bot_id, "human and integration are different users" if
                     policy.human_id != policy.bot_id else "human_id equals bot_id: nothing would count as human approval"))
     return results

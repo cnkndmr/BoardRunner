@@ -131,3 +131,11 @@ def test_damaged_state_stops_instead_of_guessing(tmp_path):
     path.write_text("{broken")
     with pytest.raises(SetupError, match="damaged"):
         load_state(path)
+
+
+def test_relative_state_folder_works(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "work").mkdir()
+    run = ClaudeRunner({"workdir": "work", "claude_path": fake_claude(tmp_path, "echo $@ | grep -q settings.json && echo ok")}, type(tmp_path)("state"))
+    handle = run.start("job", CARD, "p")
+    assert handle.startswith("/") and wait(run, handle) == "done"
