@@ -2,7 +2,7 @@
 
 Run AI coding agents from a kanban board. Open a card, choose who does the work; the agent writes a plan on the card, waits for your approval, does the job and reports back on the same card.
 
-> **Status: early. Not usable yet:** the board can be created and read in Notion, but agents do not run yet ([plan](docs/PLAN.md)). The design comes from a private setup that runs daily.
+> **Status: early. Not usable yet:** one pass works end to end with Notion and Claude Code on macOS, with no scheduling yet ([plan](docs/PLAN.md)). The design comes from a private setup that runs daily.
 
 ```mermaid
 flowchart LR
@@ -37,6 +37,14 @@ python3 boardrunner.py dry-run
 ```
 
 `init` creates the board and writes `boardrunner.toml`. `dry-run` shows what would happen and changes nothing.
+
+To let agents work, create the work folder, set `mode = "live"` in the config, and repeat:
+
+```sh
+python3 boardrunner.py run --once
+```
+
+Jobs run in the Claude Code sandbox: no network, writes only in the work folder, no reading of `~/.ssh` and similar folders.
 
 ## Development
 

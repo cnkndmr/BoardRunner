@@ -2,6 +2,7 @@
 mode = "dry-run"  # dry-run | live | off
 me = "laptop"     # this machine's agent; the only line that differs between machines
 timezone = "Europe/Berlin"
+# primary = false  # set on all machines but one; a primary handles human cards and shared warnings
 
 [board]
 database_id = "<notion-database-id>"
@@ -13,8 +14,11 @@ bot_id = "<integration-user-id>"
 [[agents]]
 name = "laptop"
 workdir = "~/work"
-sandbox = "strict"
+sandbox = "strict"  # strict | off
 max_jobs = 3
+# model = "sonnet"
+# max_minutes = 360
+# instructions = "Extra rules for this agent"
 
 [[agents]]
 name = "server"
