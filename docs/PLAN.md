@@ -1,4 +1,4 @@
-# BoardRunner plan (v0.2)
+# BoardRunner plan (v0.3)
 
 Goal: anyone with a Notion account and an agent CLI can go from zero to a first finished card in about 15 minutes, on their own machines, with their own agent names.
 
@@ -37,7 +37,8 @@ The core makes decisions and touches nothing. Everything that touches the outsid
 3. `dry-run` is the default; `live` is a deliberate config change.
 4. Only a human edit may start a job, never an edit made by the bot.
 5. A job outlives the runner: restarting BoardRunner never kills or duplicates work.
-6. Runtime dependencies stay at zero (Python standard library).
+6. All agents behave the same. Any number of agents can share a board, and only their config differs: name, working folder, sandbox, parallel limit, extra instructions. Shared code never branches on an agent name or a platform name.
+7. Runtime dependencies stay at zero (Python standard library).
 
 ## Milestones
 
@@ -62,3 +63,4 @@ The core makes decisions and touches nothing. Everything that touches the outsid
 
 - 2026-11-01 v0.1: project opened, skeleton and plan written.
 - 2026-11-01 v0.2: licence decided: MIT.
+- 2026-11-01 v0.3: same behaviour for every agent; only the environment differs.
