@@ -1367,7 +1367,7 @@ def _cmd_init(args) -> int:
 
 
 def machine_name() -> str:
-    """The default agent name for this machine. Host names are often asset tags (XK7Q2R9P), so use the system."""
+    """The default agent name for this machine. Host names are often asset tags (like XK7Q2R9P), so use the system."""
     return {"darwin": "mac", "linux": "linux"}.get(sys.platform, "computer")
 
 
