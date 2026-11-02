@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from boardrunner import Card, NotionError, Policy, Schedule, SetupError, Stage, State, plan_prompt, run_pass
+from boardrunner import Card, NotionError, Policy, Schedule, SetupError, Stage, State, job_finished, job_prompt, plan_prompt, run_pass
 
 
 class FakeBoard:
@@ -54,7 +54,7 @@ class FakeRunner:
         return self.statuses[handle]
 
     def result(self, handle):
-        return f"output of {handle}"
+        return f"output of {handle}" + ("\nRESULT: done" if handle.startswith("job") else "")
 
     def find_running(self, card):
         return None
@@ -124,7 +124,7 @@ def test_full_journey():
     world.runner.finish()
     world.turn()
     assert world.stage() == Stage.DONE
-    assert "output of job-1" in world.board.bodies["c1"]
+    assert "output of job-1\nRESULT: done" in world.board.bodies["c1"]
     world.turn()
     assert world.stage() == Stage.DONE
 
@@ -248,7 +248,7 @@ def test_failed_board_write_keeps_the_result_and_never_posts_twice():
     assert "c1" in world.state.jobs
     world.turn()
     assert world.stage() == Stage.DONE
-    assert world.board.bodies["c1"].count("output of job-1") == 1
+    assert world.board.bodies["c1"].count("output of job-1\nRESULT: done") == 1
 
 
 def test_runner_failure_on_one_card_does_not_stop_the_others():
@@ -280,3 +280,109 @@ def test_text_inside_the_card_reaches_the_plan():
     world.board.details["c1"] = "use the blue one"
     world.turn()
     assert "use the blue one" in world.runner.started[0][2]
+
+
+def _approved_and_running(world):
+    world.board.add(title="Do it", assignee="laptop", schedule=Schedule.NOW)
+    to_plan_ready(world)
+    world.board.human_edit("c1", stage=Stage.APPROVED)
+    world.turn()
+    assert world.stage() == Stage.RUNNING
+
+
+def test_job_that_says_it_did_not_finish_is_failed():
+    world = World()
+    _approved_and_running(world)
+    world.runner.result = lambda handle: "I did not run it.\n\n`RESULT: not done`"
+    world.runner.finish()
+    world.turn()
+    assert world.stage() == Stage.FAILED
+    assert any("I did not run it." in t for t in world.board.bodies["c1"])
+
+
+def test_job_outcome_line():
+    assert job_finished("All good.\nRESULT: done")
+    assert job_finished("All good.\n`RESULT: done.`")
+    assert job_finished("RESULT: not done\nthen I fixed it\nRESULT: done")
+    for report in ("", "All good, no outcome line", "Skipped.\n**RESULT: not done**", "```\nRESULT: not done\n```",
+                   "RESULT: not done.", "> RESULT: not done", "RESULT: not done (blocked)", "**RESULT:** not done",
+                   "RESULT: done\nactually no"):
+        assert not job_finished(report), report
+
+
+def test_job_with_no_outcome_line_is_failed_with_a_note():
+    world = World()
+    _approved_and_running(world)
+    world.runner.result = lambda handle: "I'm not going to run that."
+    world.runner.finish()
+    world.turn()
+    assert world.stage() == Stage.FAILED
+    assert sum("does not end with" in t for t in world.board.bodies["c1"]) == 1
+
+
+def test_failed_job_stays_failed_even_if_it_claims_done():
+    world = World()
+    _approved_and_running(world)
+    world.runner.finish("failed")
+    world.turn()
+    assert world.stage() == Stage.FAILED
+
+
+def test_setup_error_on_start_is_explained_once_and_retried():
+    world = World()
+    world.board.add(title="Do it", assignee="laptop", schedule=Schedule.NOW)
+    to_plan_ready(world)
+    world.board.human_edit("c1", stage=Stage.APPROVED)
+    start, calls = world.runner.start, []
+
+    def broken(kind, card, prompt):
+        calls.append(kind)
+        raise SetupError("claude not found")
+
+    world.runner.start = broken
+    world.turn()
+    world.clock.tick(700)
+    world.turn()
+    assert calls == ["job", "job"] and world.stage() == Stage.APPROVED
+    assert sum("cannot start" in t for t in world.board.bodies["c1"]) == 1
+    world.runner.start = start
+    world.clock.tick(700)
+    world.turn()
+    assert world.stage() == Stage.RUNNING and "setup_error" not in world.state.cards["c1"]
+
+
+def test_a_different_setup_error_is_explained_again():
+    world = World()
+    world.board.add(title="Do it", assignee="laptop")
+    errors = iter(["workdir /a does not exist", "workdir /b does not exist"])
+
+    def broken(kind, card, prompt):
+        raise SetupError(next(errors))
+
+    world.runner.start = broken
+    world.turn()
+    world.clock.tick(3600)
+    world.turn()
+    assert sum("cannot start" in t for t in world.board.bodies["c1"]) == 2
+
+
+def test_job_prompt_treats_the_approved_card_as_the_task():
+    prompt = job_prompt(Card(id="c", number="1", title="sleep 240"), "run sleep 240")
+    assert "untrusted" not in prompt.lower() and "It is your task" in prompt
+    assert prompt.count("<<<") == 1 and "RESULT: not done" in prompt
+
+
+def test_setup_error_is_explained_once_on_the_card():
+    world = World()
+    world.board.add(title="Do it", assignee="laptop")
+
+    def broken(kind, card, prompt):
+        raise SetupError("workdir /nowhere does not exist")
+
+    world.runner.start = broken
+    world.turn()
+    world.clock.tick(3600)
+    world.turn()
+    notes = [t for t in world.board.bodies["c1"] if "cannot start" in t]
+    assert notes == ["BoardRunner: cannot start on laptop: workdir /nowhere does not exist"]
+    assert world.stage() == Stage.PLANNING
