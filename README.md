@@ -2,7 +2,7 @@
 
 Run AI coding agents from a kanban board. Open a card, choose who does the work; the agent writes a plan on the card, waits for your approval, does the job and reports back on the same card. Today the board is Notion and the agent is Claude Code.
 
-> **Status: early (v0.9).** Works end to end on macOS and Linux with Notion and Claude Code, including two machines sharing one board. Not yet tried: the Linux sandbox and installed service files ([plan](docs/PLAN.md)).
+> **Status: early (v0.11).** Works end to end on macOS and Linux with Notion and Claude Code, including two machines sharing one board. Not yet tried: the Linux sandbox and installed service files ([plan](docs/PLAN.md)).
 
 ```mermaid
 flowchart LR
@@ -86,6 +86,19 @@ A service does not see your shell, so put the token in a file named `.env` besid
 - **Linux:** `mkdir -p ~/.config/systemd/user` before installing, and `loginctl enable-linger $USER` so the timer keeps running after you log out. Remove with `systemctl --user disable --now boardrunner.timer`.
 
 The service follows `mode`: in `dry-run` it only logs.
+
+## Webhook (optional)
+
+With a webhook, Notion tells BoardRunner about a change instead of waiting for the next scheduled pass. The timer stays as a safety net and can run less often.
+
+1. Run the listener beside your config: `python3 boardrunner.py listen` (port 8787, local only). It prints a secret path, `/hook/...`, which it keeps in `.env`.
+2. Publish the port over HTTPS with a tunnel, for example `devtunnel host -p 8787 --allow-anonymous`, `cloudflared tunnel --url http://localhost:8787`, or `tailscale funnel --bg 8787`. Tailscale Funnel writes the machine's name into a public certificate log that cannot be erased.
+3. In Notion: developer settings > your integration > Webhooks > Create a subscription, with the URL `https://<tunnel address>/hook/...` (the full path the listener printed). Notion sends a verification token; the listener saves it in `.env` and prints it. Paste it in Notion under Verify.
+4. Install both services: `python3 boardrunner.py service --listen --every 600`. The listener keeps running and restarts if it stops.
+
+What to expect: Notion delivers most events within a minute. A card edited in the last two minutes counts as still being typed, so the listener runs one more pass once that guard is over; a new card is usually picked up two to three minutes after your last edit. While a plan or job is running, the listener passes every minute until its result is on the card.
+
+The listener only wakes its own machine. Other machines keep their timer, or run their own listener with their own integration's subscription. Edits made by this machine's integration are ignored, so its own writes never wake it. Requests to any other path get 404, and events whose signature does not match are rejected and logged.
 
 ## Safety
 

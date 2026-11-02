@@ -1,4 +1,4 @@
-# BoardRunner plan (v0.10)
+# BoardRunner plan (v0.11)
 
 Goal: anyone with a Notion account and an agent CLI can go from zero to a first finished card in about 15 minutes, on their own machines, with their own agent names.
 
@@ -54,14 +54,18 @@ The core makes decisions and touches nothing. Everything that touches the outsid
 | M6 | Webhook trigger: a card edit starts a pass at once | An edited card is picked up in about a minute without waiting for the timer |
 | M7 | More runners and notifiers, public release | Decided after M5 |
 
-## M6: webhook trigger
+## M6: webhook trigger (done 2026-11-02)
 
 Polling stays as the safety net; the webhook only rings the bell.
 
-- Notion integration webhooks (`page.properties_updated`, `page.created`, `page.content_updated`) on every plan. Property events are batched, typically under a minute.
-- A new `boardrunner listen` command checks the signature, ignores events written by its own integration (`authors`), and runs one pass. Still one file, standard library only.
-- Notion only posts to a public HTTPS address. The default is Tailscale Funnel on one machine; that machine wakes the others on the private network. A machine with no listener keeps polling.
-- Database automations ("Send webhook") are faster but need a paid Notion plan and pause on the first failure, so they are optional.
+- `boardrunner listen` binds 127.0.0.1 and answers only on a secret path (`/hook/<random>`, kept in `.env`); every other path is 404. The first verification token is saved only if it matches a strict pattern and no secret exists yet; later ones are shown, never saved. Events must carry a valid `X-Notion-Signature`. Bodies over 64 KB, bad headers and stalled clients are refused; replays of an event id are ignored.
+- A ring runs `run --once` in a separate process, so the timer's lock still serialises passes. Rings during a pass fold into one more pass; passes are at least 30 s apart; a pass blocked by the timer waits for it, up to 5 minutes.
+- A ring also schedules one follow-up pass after the two-minute typing guard, and the listener keeps passing every minute while a plan or job is in flight, because a finished plan or job produces no Notion event.
+- `service --listen` writes a long-running listener unit (launchd KeepAlive, systemd Restart=on-failure); `service --every` sets the timer interval (600 s is enough with a listener).
+- Only the listener's machine is woken. Waking other machines is not built; they keep their timer.
+- Measured on real Notion through a public tunnel: the verification handshake, a human-created card (event after about 12 s, card picked up 2 min 28 s after the last edit, the typing guard being most of it), the plan collected by the next pass, a bot-only edit delivered in 46 s and ignored, and a bot approval refused as not a human edit.
+- Not measured: a human approval through the webhook (the browser used for the test did not save the edit), and an installed listener service.
+- Tailscale Funnel needs a tailnet admin to enable it and publishes the machine name in a public certificate log; the test used a temporary devtunnel instead.
 
 ## Known gaps after M4
 
@@ -91,3 +95,4 @@ Polling stays as the safety net; the webhook only rings the bell.
 - 2026-11-02 v0.8: Linux checks; relative paths fixed; `doctor` hints at sharing the board.
 - 2026-11-02 v0.9: M6 is the webhook trigger, after M5; the old M6 becomes M7. Jobs end with an outcome line; a missing or negative one marks the card failed. Setup errors are written once on the card.
 - 2026-11-02 v0.10: M5 part one: four fresh-eyes walkthroughs of the README found 18 gaps (3 blockers: no "Run" stage, Schedule undocumented, no first-card steps). README rewritten; `--parent` takes a page link, Notion errors say what to do, `init` writes the local timezone, `.env` accepts `export`, `service` needs a valid config. Still open: a real person reaching a finished card from the README alone.
+- 2026-11-02 v0.11: M6 done: `listen` with secret path, signature check, follow-up and in-flight passes; `service --listen`, `--every`. Three-lens review (17 findings kept) fixed before the live test.
