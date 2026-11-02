@@ -23,7 +23,7 @@ Jobs run in the Claude Code sandbox: no network, writes only in `~/work`, no acc
 
 ## More
 
-If a card does not move, run `python3 boardrunner.py doctor`, then `python3 boardrunner.py run --once` by hand; the service logs to `boardrunner.log`. The [guide](docs/guide.md) covers the rest: stages, schedules, revisions, stopping, several machines, safety, development.
+If a card does not move, run `python3 boardrunner.py doctor`, then `python3 boardrunner.py run --once` by hand; the service logs to `boardrunner.log`. Trying it for someone? See [stranger-test](docs/stranger-test.md). The [guide](docs/guide.md) covers the rest: stages, schedules, revisions, stopping, several machines, safety, development.
 
 ## License
 
