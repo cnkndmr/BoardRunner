@@ -39,3 +39,61 @@ def test_init_writes_a_timezone():
 def test_service_needs_a_config(tmp_path, capsys):
     assert main(["--config", str(tmp_path / "missing.toml"), "service", "--output", str(tmp_path / "svc")]) == 2
     assert not (tmp_path / "svc").exists()
+
+
+def test_init_does_the_setup_steps(tmp_path, monkeypatch, capsys):
+    import boardrunner
+    work = tmp_path / "work"
+    monkeypatch.setenv("NOTION_TOKEN", "secret_abc")
+    monkeypatch.setattr(boardrunner, "init_board", lambda *a, **k: {
+        "database_id": "db", "url": "", "human_id": "h", "bot_id": "b", "warnings": []})
+    monkeypatch.setattr(boardrunner, "doctor_checks", lambda *a, **k: [(True, "all good")])
+    monkeypatch.setattr(boardrunner, "machine_name", lambda: "box")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    config = tmp_path / "boardrunner.toml"
+    assert main(["--config", str(config), "init", "--parent", "0123456789abcdef0123456789abcdef", "--live"]) == 0
+    text = config.read_text()
+    assert 'mode = "live"' in text and 'name = "box"' in text and 'me = "box"' in text
+    assert work.is_dir()
+    env = tmp_path / ".env"
+    assert env.read_text() == "NOTION_TOKEN=secret_abc\n" and oct(env.stat().st_mode)[-3:] == "600"
+    out = capsys.readouterr().out
+    assert "ok   all good" in out and "Next: python3 boardrunner.py service" in out
+
+
+def test_default_agent_name_is_readable(monkeypatch):
+    import boardrunner
+    monkeypatch.setattr(boardrunner.sys, "platform", "darwin")
+    assert boardrunner.machine_name() == "mac"
+    monkeypatch.setattr(boardrunner.sys, "platform", "linux")
+    assert boardrunner.machine_name() == "linux"
+
+
+def test_init_refuses_a_folder_launchd_cannot_read_before_touching_notion(tmp_path, monkeypatch):
+    import boardrunner
+    monkeypatch.setattr(boardrunner.sys, "platform", "darwin")
+    monkeypatch.setattr(boardrunner.Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setenv("NOTION_TOKEN", "secret_abc")
+    called = []
+    monkeypatch.setattr(boardrunner, "init_board", lambda *a, **k: called.append(1))
+    (tmp_path / "Documents").mkdir()
+    config = tmp_path / "Documents" / "boardrunner.toml"
+    assert main(["--config", str(config), "init", "--parent", "0123456789abcdef0123456789abcdef"]) == 2
+    assert not called and not config.exists()
+
+
+def test_init_writes_the_claude_path_for_services(tmp_path, monkeypatch):
+    import boardrunner
+    monkeypatch.setenv("NOTION_TOKEN", "secret_abc")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(boardrunner, "init_board", lambda *a, **k: {
+        "database_id": "db", "url": "", "human_id": "h", "bot_id": "b", "warnings": []})
+    monkeypatch.setattr(boardrunner, "doctor_checks", lambda *a, **k: [(True, "ok")])
+    fake = tmp_path / "bin" / "claude"
+    fake.parent.mkdir()
+    fake.write_text("")
+    monkeypatch.setattr(boardrunner.shutil, "which", lambda name: str(fake) if name == "claude" else None)
+    config = tmp_path / "boardrunner.toml"
+    assert main(["--config", str(config), "init", "--parent", "0123456789abcdef0123456789abcdef"]) == 0
+    assert f'claude_path = "{fake.resolve()}"' in config.read_text()
+    boardrunner.load_config(config)

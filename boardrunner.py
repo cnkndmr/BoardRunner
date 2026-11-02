@@ -13,19 +13,16 @@ from __future__ import annotations
 
 import argparse
 import fcntl
-import hmac
 import http.client
 import json
 import os
 import re
-import secrets
 import shutil
 import signal
 import socket
 import subprocess
 import sys
 import time
-import threading
 import tomllib
 import urllib.error
 import urllib.request
@@ -33,12 +30,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from hashlib import sha256
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable, Protocol
 from zoneinfo import ZoneInfo
 
-__version__ = "0.0.1"
+__version__ = "0.12"
 
 
 class Stage(StrEnum):
@@ -991,7 +987,8 @@ def load_config(path: Path) -> tuple[dict, Policy]:
     try:
         config = tomllib.loads(path.read_text())
     except FileNotFoundError:
-        raise SetupError(f"{path} not found. Run: python3 boardrunner.py init --parent <page-id> --agent <name>") from None
+        raise SetupError(f"{path} not found. Run this from the folder that holds boardrunner.toml, or put --config <path> "
+                         'before the command. New setup: python3 boardrunner.py init --parent "<page link>" --live') from None
     except tomllib.TOMLDecodeError as error:
         raise SetupError(f"{path}: {error}") from None
     board = config.get("board") or {}
@@ -1314,66 +1311,27 @@ WantedBy=timers.target
 """}
 
 
-def listen_service_files(platform: str, python: str, script: Path, config: Path, port: int = 8787) -> dict[str, str]:
-    """A listener runs all the time and is restarted when it stops; it logs beside the config, like the passes."""
-    workdir = config.parent
-    command = [python, str(script), "--config", str(config), "listen", "--port", str(port)]
-    if platform == "darwin":
-        arguments = "\n".join(f"    <string>{part}</string>" for part in command)
-        return {"com.boardrunner.listen.plist": f"""<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>Label</key><string>com.boardrunner.listen</string>
-  <key>ProgramArguments</key><array>
-{arguments}
-  </array>
-  <key>WorkingDirectory</key><string>{workdir}</string>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-  <key>ThrottleInterval</key><integer>30</integer>
-  <key>StandardOutPath</key><string>{workdir}/boardrunner.log</string>
-  <key>StandardErrorPath</key><string>{workdir}/boardrunner.log</string>
-</dict></plist>
-"""}
-    return {"boardrunner-listen.service": f"""[Unit]
-Description=BoardRunner webhook listener
-
-[Service]
-WorkingDirectory={workdir}
-ExecStart={' '.join(command)}
-Restart=on-failure
-RestartSec=30
-# Passes it starts launch jobs in their own process groups, which must outlive a restart.
-KillMode=process
-
-[Install]
-WantedBy=default.target
-"""}
+def _check_service_folder(config_path: Path) -> None:
+    if sys.platform == "darwin" and any(config_path.resolve().is_relative_to(Path.home() / d) for d in ("Documents", "Desktop", "Downloads")):
+        raise SetupError(f"{config_path.resolve().parent} is in a folder launchd cannot read. Use a folder such as "
+                         "~/boardrunner for boardrunner.py, the config and .env")
 
 
 def _cmd_service(args) -> int:
     config_path = Path(args.config).resolve()
     load_config(config_path)
-    if sys.platform == "darwin" and any(config_path.is_relative_to(Path.home() / d) for d in ("Documents", "Desktop", "Downloads")):
-        raise SetupError(f"{config_path} is in a folder launchd cannot read. Move the config, .env and boardrunner.py elsewhere, e.g. ~/boardrunner")
-    files = service_files(sys.platform, sys.executable, Path(__file__).resolve(), config_path, args.every)
-    if args.listen:
-        files.update(listen_service_files(sys.platform, sys.executable, Path(__file__).resolve(), config_path, args.port))
-    target = Path(args.output)
+    _check_service_folder(config_path)
+    files = service_files(sys.platform, sys.executable, Path(__file__).resolve(), config_path)
+    target = Path(args.output).resolve()
     target.mkdir(parents=True, exist_ok=True)
     for name, text in files.items():
         (target / name).write_text(text)
         print(target / name)
     if sys.platform == "darwin":
         print(f"Install: cp {target}/com.boardrunner.plist ~/Library/LaunchAgents/ && launchctl load ~/Library/LaunchAgents/com.boardrunner.plist")
-        if args.listen:
-            print(f"Listener: cp {target}/com.boardrunner.listen.plist ~/Library/LaunchAgents/ && "
-                  "launchctl load ~/Library/LaunchAgents/com.boardrunner.listen.plist")
     else:
         print(f"Install: mkdir -p ~/.config/systemd/user && cp {target}/boardrunner.* ~/.config/systemd/user/ && "
-              "systemctl --user enable --now boardrunner.timer")
-        if args.listen:
-            print("Listener: systemctl --user enable --now boardrunner-listen.service")
+              "systemctl --user enable --now boardrunner.timer && loginctl enable-linger $USER")
     return 0
 
 
@@ -1381,18 +1339,54 @@ def _cmd_init(args) -> int:
     path = Path(args.config)
     if path.exists():
         raise SetupError(f"{path} already exists, so this machine has a board. Remove it to create another.")
-    agents = args.agent
+    _check_service_folder(path)
+    agents = args.agent or [machine_name()]
     if args.human in agents or len(set(agents)) != len(agents):
         raise SetupError("Agent and human names must be different from each other")
     created = init_board(_token(args.token_env, path), page_id(args.parent), agents, args.human, args.title, args.human_user)
-    path.write_text(config_text(created["database_id"], created["human_id"], created["bot_id"], agents, agents[0],
-                                args.human, args.token_env, local_timezone()))
+    text = config_text(created["database_id"], created["human_id"], created["bot_id"], agents, agents[0],
+                       args.human, args.token_env, local_timezone())
+    if args.live:
+        text = text.replace('mode = "dry-run"', 'mode = "live"', 1)
+    claude = shutil.which("claude")
+    if claude:  # a service has a short PATH and would not find it
+        text = text.replace('sandbox = "strict"', f'sandbox = "strict"\nclaude_path = {_toml_text(str(Path(claude).resolve()))}', 1)
+    path.write_text(text)
     print(f"Board created: {created['url'] or created['database_id']}")
-    print(f"Config written: {path} (mode: dry-run)")
+    print(f"Config written: {path} (mode: {'live' if args.live else 'dry-run'}, this machine's agent: {agents[0]})")
     for warning in created["warnings"]:
         print(f"Warning: {warning}")
-    print("Next: mkdir -p ~/work, then python3 boardrunner.py doctor")
+    _finish_setup(path, args.token_env)
     return 0
+
+
+def machine_name() -> str:
+    """The default agent name for this machine. Host names are often asset tags (XK7Q2R9P), so use the system."""
+    return {"darwin": "mac", "linux": "linux"}.get(sys.platform, "computer")
+
+
+def _finish_setup(path: Path, token_env: str) -> None:
+    """The steps everyone needs after init: the work folder, the token for services, and a check."""
+    config, policy = load_config(path)
+    workdir = Path(_agent(config).get("workdir", "~/work")).expanduser()
+    if not workdir.exists():
+        workdir.mkdir(parents=True)
+        print(f"Work folder created: {workdir}")
+    env_file = path.resolve().parent / ".env"
+    token = os.environ.get(token_env, "")
+    if token and not env_file.exists():
+        descriptor = os.open(env_file, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        with os.fdopen(descriptor, "w") as handle:
+            handle.write(f"{token_env}={token}\n")
+        print(f"Token saved to {env_file} (only you can read it), so a service can use it. Keep it out of git.")
+    print("Checking:")
+    checks = doctor_checks(config, policy, _token(token_env, path))
+    for passed, text in checks:
+        print(f"  {'ok  ' if passed else 'FAIL'} {text}")
+    if all(passed for passed, _ in checks):
+        print("Next: python3 boardrunner.py service, then create a card on the board.")
+    else:
+        print("Fix the FAIL lines, then run: python3 boardrunner.py doctor")
 
 
 def _cmd_dry_run(args) -> int:
@@ -1405,249 +1399,6 @@ def _cmd_dry_run(args) -> int:
     return 0
 
 
-WEBHOOK_SECRET, WEBHOOK_PATH = "NOTION_WEBHOOK_SECRET", "NOTION_WEBHOOK_PATH"
-WEBHOOK_MAX_BYTES = 64_000  # Notion events are small
-WEBHOOK_TOKEN = re.compile(r"[A-Za-z0-9_\-]{16,256}")
-BUSY = "Another pass is still running."
-
-
-def webhook_signature_ok(secret: str, body: bytes, header: str | None) -> bool:
-    """Notion signs the raw body with HMAC-SHA256, keyed with the subscription's verification token."""
-    if not secret or not header or not header.isascii():
-        return False
-    expected = "sha256=" + hmac.new(secret.encode(), body, sha256).hexdigest()
-    return hmac.compare_digest(expected.encode(), header.strip().encode())
-
-
-def webhook_wakes(event: dict, bot_id: str) -> bool:
-    """Any event wakes the runner, except one written only by this machine's own integration."""
-    authors = [a.get("id") for a in event.get("authors") or [] if isinstance(a, dict)]
-    return not authors or any(author != bot_id for author in authors)
-
-
-def _env_value(env_file: Path, name: str) -> str:
-    for line in env_file.read_text().splitlines() if env_file.exists() else []:
-        line = line.strip().removeprefix("export ").strip()
-        if line.startswith(f"{name}="):
-            return line.split("=", 1)[1].strip().strip('"').strip("'")
-    return ""
-
-
-def _save_env(env_file: Path, name: str, value: str) -> None:
-    """Replace one line of .env atomically; the file is never readable by others, not even for a moment."""
-    if not WEBHOOK_TOKEN.fullmatch(value):
-        raise ValueError(f"refusing to write {name}: unexpected characters")
-    lines = [line for line in (env_file.read_text().splitlines() if env_file.exists() else [])
-             if not line.strip().removeprefix("export ").strip().startswith(f"{name}=")]
-    temporary = env_file.with_name(f".env.{os.getpid()}.tmp")
-    descriptor = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-    with os.fdopen(descriptor, "w") as handle:
-        handle.write("\n".join([*lines, f"{name}={value}"]) + "\n")
-    os.replace(temporary, env_file)
-
-
-def webhook_path(env_file: Path) -> str:
-    """An unguessable path: the public address only works for whoever was given the full URL."""
-    key = _env_value(env_file, WEBHOOK_PATH)
-    if not WEBHOOK_TOKEN.fullmatch(key):
-        key = secrets.token_urlsafe(24)
-        _save_env(env_file, WEBHOOK_PATH, key)
-    return f"/hook/{key}"
-
-
-class Doorbell:
-    """Runs one pass per ring. Rings during a pass fold into one pass after it, and passes are at least `gap` apart."""
-
-    def __init__(self, run: Callable[[], str], gap: float = 30, busy_wait: float = 20, busy_limit: float = 300,
-                 log: Callable[[str], None] = print, follow_up: float | None = None,
-                 in_flight: Callable[[], bool] = lambda: False, poll: float = 60):
-        self.run, self.gap, self.busy_wait, self.busy_limit, self.log = run, gap, busy_wait, busy_limit, log
-        self.follow_up, self.in_flight, self.poll = follow_up, in_flight, poll
-        self._lock, self._pending, self._busy, self._last = threading.Lock(), False, False, -gap
-        self._timer: threading.Timer | None = None
-
-    def ring(self, follow: bool = True) -> None:
-        """A card edited moments ago still counts as being typed, so one more pass follows once that guard is over.
-        Every new ring moves the follow-up later; a burst of edits ends with one follow-up."""
-        if follow and self.follow_up:
-            with self._lock:
-                if self._timer:
-                    self._timer.cancel()
-                self._timer = threading.Timer(self.follow_up, self.ring, kwargs={"follow": False})
-                self._timer.daemon = True
-                self._timer.start()
-        with self._lock:
-            if self._busy:
-                self._pending = True
-                return
-            self._busy = True
-        threading.Thread(target=self._loop, daemon=True).start()
-
-    def _pass(self) -> str:
-        waited = 0.0
-        while True:
-            output = self.run()
-            if BUSY not in output or waited >= self.busy_limit:  # the scheduled pass held the lock: wait for it
-                return output
-            time.sleep(self.busy_wait)
-            waited += self.busy_wait
-
-    def _loop(self) -> None:
-        while True:
-            time.sleep(max(0.0, self._last + self.gap - time.monotonic()))
-            try:
-                self.log((self._pass().strip() or "Nothing to do.").replace("\n", "\n  "))
-            except Exception as error:  # a failed pass must not stop the listener
-                try:
-                    self.log(f"pass failed: {error}")
-                except Exception:
-                    pass
-            self._last = time.monotonic()
-            try:
-                watch = self.in_flight()  # a plan or job ends without any Notion event: keep passing until it is collected
-            except Exception:
-                watch = False
-            with self._lock:
-                if not self._pending:
-                    self._busy = False
-                    if watch:
-                        timer = threading.Timer(self.poll, self.ring, kwargs={"follow": False})
-                        timer.daemon = True
-                        timer.start()
-                    return
-                self._pending = False
-
-
-class _Throttle:
-    def __init__(self, seconds: float = 60):
-        self.seconds, self.last = seconds, {}
-
-    def __call__(self, key: str) -> bool:
-        now = time.monotonic()
-        if now - self.last.get(key, -self.seconds) < self.seconds:
-            return False
-        self.last[key] = now
-        return True
-
-
-def webhook_handler(config_path: Path, bot_id: str, doorbell: Doorbell, log: Callable[[str], None] = print,
-                    path: str | None = None):
-    env_file = config_path.resolve().parent / ".env"
-    path = path or webhook_path(env_file)
-    lock, seen, throttle = threading.Lock(), {}, _Throttle()
-
-    def secret() -> str:
-        return os.environ.get(WEBHOOK_SECRET) or _env_value(env_file, WEBHOOK_SECRET)
-
-    def note(key: str, text: str) -> None:
-        if throttle(key):
-            log(text)
-
-    class Handler(BaseHTTPRequestHandler):
-        timeout = 10  # a stalled client cannot hold a thread
-
-        def log_message(self, *args) -> None:  # the default writes every request to stderr
-            pass
-
-        def _reply(self, code: int) -> None:
-            self.send_response(code)
-            self.send_header("Content-Length", "0")
-            self.end_headers()
-
-        def do_POST(self) -> None:
-            if self.path.split("?")[0] != path:
-                return self._reply(404)
-            try:
-                length = int(self.headers.get("Content-Length") or 0)
-            except ValueError:
-                length = -1
-            if not 0 < length <= WEBHOOK_MAX_BYTES:
-                note("size", f"rejected a request: bad or too large Content-Length ({self.headers.get('Content-Length')})")
-                return self._reply(413 if length > WEBHOOK_MAX_BYTES else 400)
-            body = self.rfile.read(length)
-            try:
-                event = json.loads(body)
-            except ValueError:
-                event = None
-            if not isinstance(event, dict):
-                note("json", "rejected a request: the body is not a JSON object")
-                return self._reply(400)
-            if "verification_token" in event:
-                token = event["verification_token"]
-                if not isinstance(token, str) or not WEBHOOK_TOKEN.fullmatch(token):
-                    note("token", "rejected a verification token with unexpected characters")
-                    return self._reply(400)
-                with lock:
-                    if secret():
-                        log(f"A new verification token arrived, but {WEBHOOK_SECRET} is already set in {env_file}. "
-                            f"To use the new subscription, replace that line with:\n  {WEBHOOK_SECRET}={token}")
-                    else:
-                        _save_env(env_file, WEBHOOK_SECRET, token)
-                        log(f"Verification token saved to {env_file}. Paste it in Notion: developer settings > "
-                            f"your integration > Webhooks > Verify:\n  {token}")
-                return self._reply(200)
-            if not webhook_signature_ok(secret(), body, self.headers.get("X-Notion-Signature")):
-                note("signature", f"rejected an event: its signature does not match {WEBHOOK_SECRET} in {env_file}. "
-                     "If you re-created the subscription, remove that line and verify again.")
-                return self._reply(401)
-            self._reply(200)
-            event_id = str(event.get("id", ""))
-            with lock:
-                if event_id and event_id in seen:
-                    return
-                if event_id:
-                    seen[event_id] = True
-                    if len(seen) > 1000:
-                        seen.pop(next(iter(seen)))
-            if webhook_wakes(event, bot_id):
-                log(f"{event.get('type', 'event')} → pass")
-                doorbell.ring()
-            else:
-                note("own", f"{event.get('type', 'event')} written by this integration: ignored (logged once a minute)")
-
-        def do_GET(self) -> None:
-            self._reply(404)
-
-    return Handler
-
-
-def _cmd_listen(args) -> int:
-    path = Path(args.config).resolve()
-    config, _ = load_config(path)
-    env_file = path.parent / ".env"
-
-    def one_pass() -> str:
-        done = subprocess.run([sys.executable, str(Path(__file__).resolve()), "--config", str(path), "run", "--once"],
-                              capture_output=True, text=True, timeout=600)
-        return done.stdout + done.stderr
-
-    def log(text: str) -> None:
-        print(f"{datetime.now():%Y-%m-%d %H:%M:%S} {text}", flush=True)
-
-    state_file = _state_dir(config, path) / "state.json"
-
-    def in_flight() -> bool:
-        state = load_state(state_file)
-        return bool(state.drafts or state.jobs)
-
-    hook = webhook_path(env_file)
-    try:
-        server = ThreadingHTTPServer((args.host, args.port), webhook_handler(
-            path, config["board"]["bot_id"], Doorbell(one_pass, log=log, follow_up=QUIET_SECONDS + 15,
-                                                      in_flight=in_flight), log, hook))
-    except OSError as error:
-        raise SetupError(f"cannot listen on {args.host}:{args.port} ({error}). Is another listen running? Use --port.") from None
-    server.daemon_threads = True
-    log(f"Listening on http://{args.host}:{args.port}{hook} (mode: {config.get('mode', 'dry-run')}; passes follow the "
-        "mode in the config, read again on every pass).")
-    log(f"Publish it over HTTPS, e.g. `tailscale funnel --bg {args.port}`, then in Notion: developer settings > your "
-        f"integration > Webhooks > Create, with the URL https://<this machine's funnel name>{hook}")
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        pass
-    return 0
-
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="boardrunner", description="Run AI coding agents from a kanban board.")
@@ -1656,7 +1407,8 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command")
     init = commands.add_parser("init", help="create the board in Notion and write the config")
     init.add_argument("--parent", required=True, help="link or id of a Notion page shared with your integration")
-    init.add_argument("--agent", action="append", required=True, help="agent name; repeat for more agents")
+    init.add_argument("--agent", action="append", help="agent name; repeat for more agents (default: mac or linux)")
+    init.add_argument("--live", action="store_true", help="start in live mode instead of dry-run")
     init.add_argument("--human", default="me", help="the Assignee value meaning you do the work yourself")
     init.add_argument("--human-user", help="your Notion user id, needed when the workspace has several people")
     init.add_argument("--title", default="BoardRunner")
@@ -1671,14 +1423,7 @@ def main(argv: list[str] | None = None) -> int:
     doctor.set_defaults(handler=_cmd_doctor)
     service = commands.add_parser("service", help="write scheduler files that repeat run --once; installs nothing")
     service.add_argument("--output", default="service")
-    service.add_argument("--every", type=int, default=60, help="seconds between scheduled passes; with a listener, 600 is enough")
-    service.add_argument("--listen", action="store_true", help="also write a service for the webhook listener")
-    service.add_argument("--port", type=int, default=8787, help="the listener's port")
     service.set_defaults(handler=_cmd_service)
-    listen = commands.add_parser("listen", help="run a pass whenever Notion reports a change (webhook)")
-    listen.add_argument("--host", default="127.0.0.1", help="address to listen on; keep it local behind an HTTPS tunnel")
-    listen.add_argument("--port", type=int, default=8787)
-    listen.set_defaults(handler=_cmd_listen)
     args = parser.parse_args(argv)
     if not args.command:
         parser.print_help()

@@ -1,4 +1,4 @@
-# BoardRunner plan (v0.11)
+# BoardRunner plan (v0.12)
 
 Goal: anyone with a Notion account and an agent CLI can go from zero to a first finished card in about 15 minutes, on their own machines, with their own agent names.
 
@@ -26,7 +26,7 @@ The core makes decisions and touches nothing. Everything that touches the outsid
 | Core | Card state machine, tested with a fake board and runner | Done (M1) |
 | Board | Read cards, write fields and body, create the schema | Done (M2): Notion REST API, standard library only |
 | Runner | Start, watch and stop a detached agent process | Done (M3): `claude -p` |
-| Sandbox | Limit network, writes and secret reads | Done (M3): Claude Code sandbox, `strict` by default; tried on macOS only |
+| Sandbox | Limit network, writes and secret reads | Done (M3): Claude Code sandbox, `strict` by default; tried on macOS; on Linux it refused correctly without `socat`, never ran |
 | Notifier | One-line event messages | `none` |
 | Scheduler | Run one pass per minute | Done (M4): `run --once` and generated systemd or launchd files; nothing is installed for you |
 
@@ -41,6 +41,8 @@ The core makes decisions and touches nothing. Everything that touches the outsid
 7. Runtime dependencies stay at zero (Python standard library).
 8. The product is one file, `boardrunner.py`. Tests stay in the repository. v1 has one runner (Claude Code); new adapters must not push the file far past 3000 lines.
 
+9. Five steps to a first card, as the README shows them. A change that adds a step, a command or a long-running process needs a decision first; details go to `docs/guide.md`, not the README.
+
 ## Milestones
 
 | # | Result | Done when |
@@ -51,21 +53,12 @@ The core makes decisions and touches nothing. Everything that touches the outsid
 | M3 | Claude runner, sandbox, `run --once` | A real card goes from plan to done in dry-run, then live |
 | M4 | `doctor`, service files, multiple machines | Two machines share a board without touching each other's cards |
 | M5 | Stranger test | Someone new reaches the first finished card from the README alone |
-| M6 | Webhook trigger: a card edit starts a pass at once | An edited card is picked up in about a minute without waiting for the timer |
+| M6 | Webhook trigger (parked on branch `webhook`) | Built and measured; kept out of main because it saved about 30 s for a public endpoint, a tunnel and a second service |
 | M7 | More runners and notifiers, public release | Decided after M5 |
 
-## M6: webhook trigger (done 2026-11-02)
+## M6: webhook trigger (parked)
 
-Polling stays as the safety net; the webhook only rings the bell.
-
-- `boardrunner listen` binds 127.0.0.1 and answers only on a secret path (`/hook/<random>`, kept in `.env`); every other path is 404. The first verification token is saved only if it matches a strict pattern and no secret exists yet; later ones are shown, never saved. Events must carry a valid `X-Notion-Signature`. Bodies over 64 KB, bad headers and stalled clients are refused; replays of an event id are ignored.
-- A ring runs `run --once` in a separate process, so the timer's lock still serialises passes. Rings during a pass fold into one more pass; passes are at least 30 s apart; a pass blocked by the timer waits for it, up to 5 minutes.
-- A ring also schedules one follow-up pass after the two-minute typing guard, and the listener keeps passing every minute while a plan or job is in flight, because a finished plan or job produces no Notion event.
-- `service --listen` writes a long-running listener unit (launchd KeepAlive, systemd Restart=on-failure); `service --every` sets the timer interval (600 s is enough with a listener).
-- Only the listener's machine is woken. Waking other machines is not built; they keep their timer.
-- Measured on real Notion through a public tunnel: the verification handshake, a human-created card (event after about 12 s, card picked up 2 min 28 s after the last edit, the typing guard being most of it), the plan collected by the next pass, a bot-only edit delivered in 46 s and ignored, and a bot approval refused as not a human edit.
-- Not measured: a human approval through the webhook (the browser used for the test did not save the edit), and an installed listener service.
-- Tailscale Funnel needs a tailnet admin to enable it and publishes the machine name in a public certificate log; the test used a temporary devtunnel instead.
+Built, reviewed and measured on 2026-11-02, then moved to the `webhook` branch the same day. With a pass every minute, a new card is picked up in 2 to 3 minutes either way (the two-minute typing guard dominates) and an approval starts within a minute either way; the webhook only cut Notion API calls. It needed a public HTTPS endpoint, a tunnel, a second service and about 300 lines, against design rule 9. Worth reviving only for many machines or boards, or close to Notion's rate limit. Its design notes and measurements are in the branch's PLAN.
 
 ## Known gaps after M4
 
@@ -96,3 +89,4 @@ Polling stays as the safety net; the webhook only rings the bell.
 - 2026-11-02 v0.9: M6 is the webhook trigger, after M5; the old M6 becomes M7. Jobs end with an outcome line; a missing or negative one marks the card failed. Setup errors are written once on the card.
 - 2026-11-02 v0.10: M5 part one: four fresh-eyes walkthroughs of the README found 18 gaps (3 blockers: no "Run" stage, Schedule undocumented, no first-card steps). README rewritten; `--parent` takes a page link, Notion errors say what to do, `init` writes the local timezone, `.env` accepts `export`, `service` needs a valid config. Still open: a real person reaching a finished card from the README alone.
 - 2026-11-02 v0.11: M6 done: `listen` with secret path, signature check, follow-up and in-flight passes; `service --listen`, `--every`. Three-lens review (17 findings kept) fixed before the live test.
+- 2026-11-02 v0.12: back to the simple setup. Webhook parked on branch `webhook`. `init` now names the agent after the machine, creates the work folder, writes `.env`, takes `--live` and runs the checks. README cut to five steps (34 lines); the rest moved to `docs/guide.md`. Design rule 9: five steps to a first card. A second fresh-eyes walk (3 walkers + verifier) found 12 gaps, all fixed without lengthening the README (30 lines): `init` refuses folders launchd cannot read before touching Notion and writes `claude_path`; the Linux install line enables linger; `--version` is 0.12.
