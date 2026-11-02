@@ -1,4 +1,4 @@
-# BoardRunner plan (v0.9)
+# BoardRunner plan (v0.10)
 
 Goal: anyone with a Notion account and an agent CLI can go from zero to a first finished card in about 15 minutes, on their own machines, with their own agent names.
 
@@ -90,3 +90,4 @@ Polling stays as the safety net; the webhook only rings the bell.
 - 2026-11-01 v0.7: M4 mostly done: card body, Markdown, `doctor`, `service`, two runners on one board. Two real machines still open.
 - 2026-11-02 v0.8: Linux checks; relative paths fixed; `doctor` hints at sharing the board.
 - 2026-11-02 v0.9: M6 is the webhook trigger, after M5; the old M6 becomes M7. Jobs end with an outcome line; a missing or negative one marks the card failed. Setup errors are written once on the card.
+- 2026-11-02 v0.10: M5 part one: four fresh-eyes walkthroughs of the README found 18 gaps (3 blockers: no "Run" stage, Schedule undocumented, no first-card steps). README rewritten; `--parent` takes a page link, Notion errors say what to do, `init` writes the local timezone, `.env` accepts `export`, `service` needs a valid config. Still open: a real person reaching a finished card from the README alone.

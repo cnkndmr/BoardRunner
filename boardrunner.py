@@ -669,6 +669,23 @@ def _safe_to_resend(method: str, path: str) -> bool:
     return not path.endswith("/children")
 
 
+def _error_message(body: bytes) -> str:
+    try:
+        return str(json.loads(body).get("message") or body[:300].decode(errors="replace"))
+    except (ValueError, AttributeError):
+        return body[:300].decode(errors="replace")
+
+
+def notion_hint(error: NotionError) -> str:
+    """What a person can do about a Notion error, or nothing."""
+    if error.code == 401:
+        return " The token was rejected: copy the integration secret again into NOTION_TOKEN."
+    if error.code in (403, 404) or (error.code == 400 and "/databases" in str(error)):
+        return (" The integration cannot see this page or board. Open it in Notion, ••• > Connections, add the "
+                "integration; if that is not enough, add it under the integration's Content access in Notion's developer settings.")
+    return ""
+
+
 def notion_request(token: str, method: str, path: str, body: dict | None = None, version: str = NOTION_VERSION) -> dict:
     data = json.dumps(body).encode() if body is not None else None
     for attempt in range(5):
@@ -685,7 +702,7 @@ def notion_request(token: str, method: str, path: str, body: dict | None = None,
                 except ValueError:
                     time.sleep(2 ** attempt)
                 continue
-            raise NotionError(error.code, f"{method} {path}: {error.code} {error.read()[:300]!r}") from error
+            raise NotionError(error.code, f"{method} {path}: {error.code} {_error_message(error.read())}") from error
         except (OSError, http.client.HTTPException, ValueError) as error:
             reason = getattr(error, "reason", error)
             never_sent = isinstance(reason, (socket.gaierror, ConnectionRefusedError))
@@ -905,14 +922,38 @@ def _toml_text(value: str) -> str:
 
 
 def config_text(database_id: str, human_id: str, bot_id: str, agents: list[str], me: str, human: str,
-                token_env: str) -> str:
-    lines = ['mode = "dry-run"  # dry-run | live | off', f"me = {_toml_text(me)}  # this machine's agent", "",
+                token_env: str, timezone: str = "UTC") -> str:
+    lines = ['mode = "dry-run"  # dry-run | live | off', f"me = {_toml_text(me)}  # this machine's agent",
+             f"timezone = {_toml_text(timezone)}  # Night (01:00-05:30) and At date use this zone", "",
              "[board]", f"database_id = {_toml_text(database_id)}", f"token_env = {_toml_text(token_env)}",
              f"human_id = {_toml_text(human_id)}", f"bot_id = {_toml_text(bot_id)}"]
     for name in agents:
         lines += ["", "[[agents]]", f"name = {_toml_text(name)}", 'workdir = "~/work"', 'sandbox = "strict"', "max_jobs = 3"]
     lines += ["", "[[humans]]", f"name = {_toml_text(human)}"]
     return "\n".join(lines) + "\n"
+
+
+def page_id(text: str) -> str:
+    """Accept a page id or the page's URL, which ends with the 32 hex digits of the id."""
+    found = re.findall(r"[0-9a-fA-F]{32}|[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}", text.split("?")[0])
+    if not found:
+        raise SetupError(f"--parent {text!r} is not a page id or page URL. Copy the page link in Notion and paste it here.")
+    return found[-1]
+
+
+def local_timezone() -> str:
+    """The IANA name of this machine's zone, so Night and At date mean local time. UTC when it cannot be told."""
+    name = os.environ.get("TZ", "").lstrip(":")
+    if not name:
+        try:
+            name = os.path.realpath("/etc/localtime").split("zoneinfo/", 1)[1]
+        except IndexError:
+            name = ""
+    try:
+        ZoneInfo(name)
+    except (ValueError, KeyError, OSError):
+        return "UTC"
+    return name or "UTC"
 
 
 def init_board(token: str, parent: str, agents: list[str], human: str, title: str, human_user: str | None = None,
@@ -969,8 +1010,9 @@ def _token(name: str, config_path: Path | None = None) -> str:
         env_file = config_path.resolve().parent / ".env"
         if env_file.exists():
             for line in env_file.read_text().splitlines():
+                line = line.strip().removeprefix("export ").strip()
                 if line.startswith(f"{name}="):
-                    token = line.split("=", 1)[1].strip().strip('"')
+                    token = line.split("=", 1)[1].strip().strip('"').strip("'")
     if not token:
         raise SetupError(f"Set your Notion integration token in the {name} environment variable, or in a .env beside the config")
     return token
@@ -1197,7 +1239,8 @@ def doctor_checks(config: dict, policy: Policy, token: str, request: Callable[..
     try:
         me = request(token, "GET", "/users/me")
         results.append((me.get("id") == policy.bot_id, "Notion token belongs to the configured integration"
-                        if me.get("id") == policy.bot_id else "Notion token does not match bot_id in the config"))
+                        if me.get("id") == policy.bot_id else
+                        f"Notion token belongs to {me.get('id')}, but bot_id in the config is {policy.bot_id}"))
         props = request(token, "GET", f"/databases/{config['board']['database_id']}").get("properties", {})
         missing = [name for name in ("Stage", "Assignee", "Schedule", "Due", "Revision note", "Archive") if name not in props]
         results.append((not missing, "board fields present" if not missing else f"board fields missing: {', '.join(missing)}"))
@@ -1206,8 +1249,7 @@ def doctor_checks(config: dict, policy: Policy, token: str, request: Callable[..
         results.append((not missing, "every agent can be chosen on the board" if not missing else
                         f"add to Assignee on the board: {', '.join(missing)}"))
     except NotionError as error:
-        hint = " Share the board with this machine's integration in Notion." if error.code == 404 else ""
-        results.append((False, f"Notion: {error}{hint}"))
+        results.append((False, f"Notion: {error}{notion_hint(error)}"))
     results.append((policy.human_id != policy.bot_id, "human and integration are different users" if
                     policy.human_id != policy.bot_id else "human_id equals bot_id: nothing would count as human approval"))
     return results
@@ -1265,16 +1307,21 @@ WantedBy=timers.target
 
 
 def _cmd_service(args) -> int:
-    files = service_files(sys.platform, sys.executable, Path(__file__).resolve(), Path(args.config).resolve())
+    config_path = Path(args.config).resolve()
+    load_config(config_path)
+    if sys.platform == "darwin" and any(config_path.is_relative_to(Path.home() / d) for d in ("Documents", "Desktop", "Downloads")):
+        raise SetupError(f"{config_path} is in a folder launchd cannot read. Move the config, .env and boardrunner.py elsewhere, e.g. ~/boardrunner")
+    files = service_files(sys.platform, sys.executable, Path(__file__).resolve(), config_path)
     target = Path(args.output)
     target.mkdir(parents=True, exist_ok=True)
     for name, text in files.items():
         (target / name).write_text(text)
         print(target / name)
     if sys.platform == "darwin":
-        print("Install: cp com.boardrunner.plist ~/Library/LaunchAgents/ && launchctl load ~/Library/LaunchAgents/com.boardrunner.plist")
+        print(f"Install: cp {target}/com.boardrunner.plist ~/Library/LaunchAgents/ && launchctl load ~/Library/LaunchAgents/com.boardrunner.plist")
     else:
-        print("Install: cp boardrunner.* ~/.config/systemd/user/ && systemctl --user enable --now boardrunner.timer")
+        print(f"Install: mkdir -p ~/.config/systemd/user && cp {target}/boardrunner.* ~/.config/systemd/user/ && "
+              "systemctl --user enable --now boardrunner.timer")
     return 0
 
 
@@ -1285,13 +1332,14 @@ def _cmd_init(args) -> int:
     agents = args.agent
     if args.human in agents or len(set(agents)) != len(agents):
         raise SetupError("Agent and human names must be different from each other")
-    created = init_board(_token(args.token_env, path), args.parent, agents, args.human, args.title, args.human_user)
+    created = init_board(_token(args.token_env, path), page_id(args.parent), agents, args.human, args.title, args.human_user)
     path.write_text(config_text(created["database_id"], created["human_id"], created["bot_id"], agents, agents[0],
-                                args.human, args.token_env))
+                                args.human, args.token_env, local_timezone()))
     print(f"Board created: {created['url'] or created['database_id']}")
     print(f"Config written: {path} (mode: dry-run)")
     for warning in created["warnings"]:
         print(f"Warning: {warning}")
+    print("Next: mkdir -p ~/work, then python3 boardrunner.py doctor")
     return 0
 
 
@@ -1311,7 +1359,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config", default="boardrunner.toml")
     commands = parser.add_subparsers(dest="command")
     init = commands.add_parser("init", help="create the board in Notion and write the config")
-    init.add_argument("--parent", required=True, help="id of a Notion page shared with your integration")
+    init.add_argument("--parent", required=True, help="link or id of a Notion page shared with your integration")
     init.add_argument("--agent", action="append", required=True, help="agent name; repeat for more agents")
     init.add_argument("--human", default="me", help="the Assignee value meaning you do the work yourself")
     init.add_argument("--human-user", help="your Notion user id, needed when the workspace has several people")
@@ -1338,7 +1386,7 @@ def main(argv: list[str] | None = None) -> int:
         print(error, file=sys.stderr)
         return 2
     except NotionError as error:
-        print(f"Notion error: {error}", file=sys.stderr)
+        print(f"Notion error: {error}{notion_hint(error)}", file=sys.stderr)
         return 1
 
 

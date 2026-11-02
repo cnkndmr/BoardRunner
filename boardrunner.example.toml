@@ -1,6 +1,7 @@
-# Written by `boardrunner.py init`. Secrets stay in environment variables.
+# Reference: every key `boardrunner.py init` writes, plus optional ones. Use the file init writes, not this one.
+# Secrets stay in the environment or in a .env beside the config.
 mode = "dry-run"  # dry-run | live | off
-me = "laptop"     # this machine's agent; the only line that differs between machines
+me = "laptop"     # this machine's agent; differs per machine, as do primary and the agent's workdir
 timezone = "Europe/Berlin"
 # primary = false  # set on all machines but one; a primary handles human cards and shared warnings
 

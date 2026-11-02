@@ -177,7 +177,7 @@ def test_doctor_names_each_problem(tmp_path):
     db["properties"]["Assignee"]["select"]["options"].pop()
     api = Api({("GET", "/users/me"): {"id": "other"}, ("GET", "/databases/db"): db})
     failed = " | ".join(text for ok, text in doctor_checks(config, policy, "t", api) if not ok)
-    for phrase in ("does not match", "Stage", "server", "human_id equals bot_id"):
+    for phrase in ("belongs to other", "Stage", "server", "human_id equals bot_id"):
         assert phrase in failed
 
 
