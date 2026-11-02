@@ -1,4 +1,4 @@
-# BoardRunner plan (v0.13)
+# BoardRunner plan (v0.14)
 
 Goal: anyone with a Notion account and an agent CLI can go from zero to a first finished card in about 15 minutes, on their own machines, with their own agent names.
 
@@ -52,7 +52,7 @@ The core makes decisions and touches nothing. Everything that touches the outsid
 | M2 | Notion adapter and `init` | `boardrunner init` creates the board in a fresh workspace |
 | M3 | Claude runner, sandbox, `run --once` | A real card goes from plan to done in dry-run, then live |
 | M4 | `doctor`, service files, multiple machines | Two machines share a board without touching each other's cards |
-| M5 | Stranger test | Someone new reaches the first finished card from the README alone |
+| M5 | Stranger test | Someone new reaches the first finished card from the README alone. Run on 2026-11-02 from the kit by the maintainer's agent, not a stranger: passed, five fixes in v0.14 |
 | M6 | Webhook trigger (parked on branch `webhook`) | Built and measured; kept out of main because it saved about 30 s for a public endpoint, a tunnel and a second service |
 | M7 | More runners and notifiers, public release | Decided after M5 |
 
@@ -65,10 +65,10 @@ Built, reviewed and measured on 2026-11-02, then moved to the `webhook` branch t
 - A Mac and a Linux server shared one board (2026-11-02): each planned and ran only its own cards, and reassigning a running card stopped it on the server. Each machine had its own integration; the board must be added to each integration's page access in Notion's developer settings, adding the connection on the page alone was not enough.
 - The Linux sandbox itself has not run: the test machine lacks `socat`, and `strict` correctly refused to start.
 - Generated systemd files passed `systemd-analyze verify`, but were never installed.
-- The macOS service command ran under launchd's conditions (empty environment, PATH /usr/bin:/bin:/usr/sbin:/sbin, its working folder and log) for a full card: plan, approval, job, Done, with `claude_path` from init and the token from `.env`. The plist itself was not loaded: unloading a launchd job is outside what this project's agents may do, so `launchctl load` is checked in M5b.
-- Service files were generated and validated, but never installed. On macOS, launchd cannot reach `~/Documents`, so keep the config elsewhere.
+- The macOS service command ran under launchd's conditions (empty environment, PATH /usr/bin:/bin:/usr/sbin:/sbin, its working folder and log) for a full card: plan, approval, job, Done, with `claude_path` from init and the token from `.env`. The plist itself was not loaded then; M5b loaded it (below).
+- M5b (2026-11-02): from the kit and README only, `init --live` passed all checks and the launchd service was installed for real. Two cards were created and edited by a person in the Notion UI: plan in about 4 minutes, approval to Done in about 1.5 minutes, a Revision note rewrote the plan, Stopped ended a running job within a minute. The service waited out a network outage and carried on. Fixed in v0.14: README step 2 wording, plan time stated as 3 to 5 minutes, times in the service log, a note when a revised plan replaces the old one, a note when a job is stopped.
+- systemd files were generated and validated, but never installed. On macOS, launchd cannot reach `~/Documents`, so keep the config elsewhere.
 - The Claude Code sandbox needs `bwrap` and `socat` on Linux; `strict` refuses to run without them.
-- Real human approval was tested only with simulated edits, because an integration cannot act as a person.
 
 ## Open decisions
 
@@ -95,3 +95,4 @@ Built, reviewed and measured on 2026-11-02, then moved to the `webhook` branch t
 - 2026-11-02 v0.13: `dry-run` reads the state earlier live passes saved (read only), so it no longer calls an approved card unverified. `init` writes the `claude` link, not the versioned file behind it, which changes on every Claude Code update. Service run checked under launchd's conditions.
 - 2026-11-02 v0.13: `docs/stranger-test.md` for M5b testers (what to do, what to send back). Name check before M7 recorded under open decisions.
 - 2026-11-02 v0.13: name check done: BoardRunner has no live software trademark; the US filing that worried us was abandoned. Fallback: cardrun.
+- 2026-11-02 v0.14: M5b run end to end with a real launchd service and real human edits. Service log lines carry a time; a revised plan and a stopped job leave a note on the card; README step 2 and plan time fixed.

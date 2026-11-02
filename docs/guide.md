@@ -40,7 +40,7 @@ This writes launchd (macOS) or systemd (Linux) files into `./service` (change wi
 
 A service has a short PATH, so `init` writes the full path of `claude` as `claude_path` in your agent block; set it by hand if you move Claude Code. A service does not see your shell either, so it reads the token from `.env` beside `boardrunner.toml`. `init` writes that file for you (readable only by you); keep it out of git. To write it by hand: one line, `NOTION_TOKEN=<secret>`, then `chmod 600 .env`.
 
-- **macOS:** keep the folder outside ~/Documents, ~/Desktop and ~/Downloads; launchd cannot read them. Remove with `launchctl unload ~/Library/LaunchAgents/com.boardrunner.plist`.
+- **macOS:** keep the folder outside ~/Documents, ~/Desktop and ~/Downloads; launchd cannot read them. Remove with `launchctl unload ~/Library/LaunchAgents/com.boardrunner.plist`, then delete that file.
 - **Linux:** the install line also runs `loginctl enable-linger $USER`, so the timer keeps running after you log out. Remove with `systemctl --user disable --now boardrunner.timer`.
 
 The service follows `mode`: in `dry-run` it only logs.

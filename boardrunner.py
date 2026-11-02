@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Callable, Protocol
 from zoneinfo import ZoneInfo
 
-__version__ = "0.13"
+__version__ = "0.14"
 
 
 class Stage(StrEnum):
@@ -464,6 +464,14 @@ def job_prompt(card: Card, plan: str) -> str:
             f"{APPROVED}\n{_card_block(f'Task: {card.title}{chr(10)}Plan:{chr(10)}{plan}')}\n")
 
 
+REVISED_NOTE = "BoardRunner: the plan above is replaced; the revised plan follows below."
+
+
+def stopped_note(reason: str, now: datetime) -> str:
+    why = "the card moved to another agent" if reason == "reassigned" else "a human moved the card to Stopped"
+    return f"BoardRunner: job stopped at {now.strftime('%Y-%m-%d %H:%M')} because {why}; it did not finish."
+
+
 def job_finished(report: str) -> bool:
     """Done only when the report's last line says so; a refusal often skips the format, so silence is not success."""
     lines = [line for raw in report.splitlines() if (line := raw.strip().strip("`*> ").strip())]
@@ -512,6 +520,10 @@ def _collect(cards: dict[str, Card], board: Board, runner: Runner, state: State,
         if status == RUNNING_STATUS:
             continue
         card = cards.get(card_id)
+        if job.get("stopping") and card and not job.get("posted"):
+            board.append(card_id, stopped_note(job.get("stop_reason", "stopped"), now))
+            job["posted"] = True
+            persist(state)
         if not job.get("stopping") and card:
             report = runner.result(job["handle"])
             if not job.get("posted"):
@@ -579,6 +591,8 @@ def _apply(action: Action, reason: str, card: Card, board: Board, runner: Runner
         move(Stage.FAILED)
     elif action == Action.REVISE:
         cancel_draft()
+        if record.get("plan"):  # first, so a failed write is retried before anything else changes
+            board.append(card.id, REVISED_NOTE)
         record.setdefault("revisions", []).append(card.revision_note.strip())
         _clear_plan(record)
         move(Stage.PLANNING, note="")
@@ -610,6 +624,7 @@ def _apply(action: Action, reason: str, card: Card, board: Board, runner: Runner
     elif action in (Action.STOP, Action.STOP_REASSIGNED):
         job = state.jobs[card.id]
         job["stopping"] = True
+        job["stop_reason"] = "reassigned" if action == Action.STOP_REASSIGNED else "stopped"
         runner.stop(job["handle"])
     elif action == Action.HAND_TO_HUMAN:
         move(Stage.FOR_HUMAN)
@@ -1224,7 +1239,8 @@ def _cmd_run(args) -> int:
         runner = ClaudeRunner(_agent(config), folder)
         log = run_pass(board, runner, state, policy, now, persist=lambda s: save_state(state_file, s))
         save_state(state_file, state)
-    print("\n".join(log) or "Nothing to do.")
+    stamp = now.strftime("%Y-%m-%d %H:%M")  # the service appends every pass to one log
+    print("\n".join(f"{stamp} {line}" for line in log) or f"{stamp} Nothing to do.")
     return 0
 
 
@@ -1435,13 +1451,14 @@ def main(argv: list[str] | None = None) -> int:
     if not args.command:
         parser.print_help()
         return 0
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M ") if args.command == "run" else ""  # the service log needs times
     try:
         return args.handler(args)
     except SetupError as error:
-        print(error, file=sys.stderr)
+        print(f"{stamp}{error}", file=sys.stderr)
         return 2
     except NotionError as error:
-        print(f"Notion error: {error}{notion_hint(error)}", file=sys.stderr)
+        print(f"{stamp}Notion error: {error}{notion_hint(error)}", file=sys.stderr)
         return 1
 
 

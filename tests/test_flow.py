@@ -142,6 +142,8 @@ def test_revision_note_rewrites_the_plan():
     world.runner.finish()
     world.turn()
     assert world.stage() == Stage.PLAN_READY
+    body = "\n".join(world.board.bodies["c1"])
+    assert body.index("output of plan-0") < body.index("the plan above is replaced") < body.index("output of plan-1")
 
 
 def test_job_failure_is_reported():
@@ -176,6 +178,10 @@ def test_human_stop_stops_the_process():
     assert world.runner.stopped == ["job-1"]
     world.turn()
     assert world.stage() == Stage.STOPPED and not world.state.jobs
+    notes = [text for text in world.board.bodies["c1"] if "job stopped at" in text]
+    assert len(notes) == 1 and "moved the card to Stopped" in notes[0]
+    world.turn()
+    assert sum("job stopped at" in text for text in world.board.bodies["c1"]) == 1
 
 
 def test_reassigning_a_running_card_stops_it_here():
@@ -187,6 +193,8 @@ def test_reassigning_a_running_card_stops_it_here():
     world.board.human_edit("c1", assignee="server")
     world.turn()
     assert world.runner.stopped == ["job-1"]
+    world.turn()
+    assert any("moved to another agent" in text for text in world.board.bodies["c1"])
 
 
 def test_two_agents_share_a_board_and_behave_the_same():

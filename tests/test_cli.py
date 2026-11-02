@@ -106,3 +106,9 @@ def test_saved_state_is_read_without_creating_anything(tmp_path):
     import boardrunner
     state = boardrunner._saved_state({}, tmp_path / "boardrunner.toml")
     assert not state.cards and not (tmp_path / "state").exists()
+
+
+def test_run_errors_carry_a_time_for_the_service_log(tmp_path, capsys):
+    import re
+    assert main(["--config", str(tmp_path / "missing.toml"), "run", "--once"]) == 2
+    assert re.match(r"\d{4}-\d\d-\d\d \d\d:\d\d ", capsys.readouterr().err)
