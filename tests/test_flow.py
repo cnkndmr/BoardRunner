@@ -386,3 +386,16 @@ def test_setup_error_is_explained_once_on_the_card():
     notes = [t for t in world.board.bodies["c1"] if "cannot start" in t]
     assert notes == ["BoardRunner: cannot start on laptop: workdir /nowhere does not exist"]
     assert world.stage() == Stage.PLANNING
+
+
+def test_preview_reads_what_live_passes_recorded():
+    world = World()
+    world.board.add(title="Do it", assignee="laptop", schedule=Schedule.NOW)
+    to_plan_ready(world)
+    world.board.human_edit("c1", stage=Stage.APPROVED)
+    world.clock.tick()
+    with_record = run_pass(world.board, None, world.state, world.policy, world.clock.now, True)
+    without = run_pass(world.board, None, State(), world.policy, world.clock.now, True)
+    assert any("start" in line for line in with_record)
+    assert not any("start" in line for line in without)  # what dry-run used to show: the wrong next step
+    assert world.stage() == Stage.APPROVED and not world.runner.started[1:]  # a preview changes nothing

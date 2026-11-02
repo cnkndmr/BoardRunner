@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Callable, Protocol
 from zoneinfo import ZoneInfo
 
-__version__ = "0.12"
+__version__ = "0.13"
 
 
 class Stage(StrEnum):
@@ -1180,6 +1180,12 @@ def save_state(path: Path, state: State) -> None:
     temporary.replace(path)
 
 
+def _saved_state(config: dict, config_path: Path) -> State:
+    """What earlier live passes recorded, read only: without it a preview cannot tell a human approval from a bot edit."""
+    folder = Path(config.get("state_dir", config_path.resolve().parent / "state")).expanduser()
+    return load_state(folder / "state.json")
+
+
 def _state_dir(config: dict, config_path: Path) -> Path:
     folder = Path(config.get("state_dir", config_path.resolve().parent / "state")).expanduser()
     folder.mkdir(parents=True, exist_ok=True)
@@ -1204,7 +1210,7 @@ def _cmd_run(args) -> int:
                         bot_id=board_config["bot_id"])
     now = datetime.now(ZoneInfo(policy.timezone))
     if mode == "dry-run":
-        print("\n".join(run_pass(board, None, State(), policy, now, dry_run=True)) or "Nothing to do.")
+        print("\n".join(run_pass(board, None, _saved_state(config, path), policy, now, dry_run=True)) or "Nothing to do.")
         return 0
     folder = _state_dir(config, path)
     with open(folder / "lock", "w") as lock:
@@ -1349,8 +1355,8 @@ def _cmd_init(args) -> int:
     if args.live:
         text = text.replace('mode = "dry-run"', 'mode = "live"', 1)
     claude = shutil.which("claude")
-    if claude:  # a service has a short PATH and would not find it
-        text = text.replace('sandbox = "strict"', f'sandbox = "strict"\nclaude_path = {_toml_text(str(Path(claude).resolve()))}', 1)
+    if claude:  # a service has a short PATH and would not find it; keep the link, which survives Claude Code updates
+        text = text.replace('sandbox = "strict"', f'sandbox = "strict"\nclaude_path = {_toml_text(str(Path(claude).absolute()))}', 1)
     path.write_text(text)
     print(f"Board created: {created['url'] or created['database_id']}")
     print(f"Config written: {path} (mode: {'live' if args.live else 'dry-run'}, this machine's agent: {agents[0]})")
@@ -1394,7 +1400,8 @@ def _cmd_dry_run(args) -> int:
     board = config["board"]
     notion = NotionBoard(_token(board.get("token_env", "NOTION_TOKEN"), Path(args.config)), board["database_id"],
                          bot_id=board["bot_id"])
-    log = run_pass(notion, None, State(), policy, datetime.now(ZoneInfo(policy.timezone)), dry_run=True)
+    log = run_pass(notion, None, _saved_state(config, Path(args.config)), policy, datetime.now(ZoneInfo(policy.timezone)),
+                   dry_run=True)
     print("\n".join(log) or "Nothing to do.")
     return 0
 

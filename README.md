@@ -2,7 +2,7 @@
 
 Run AI coding agents from a Notion board. Open a card, pick a machine; Claude Code writes a plan on the card, waits for your approval, does the job and reports back on the same card. Nothing starts without your approval.
 
-> **Status: early (v0.12).** Works on macOS and Linux, one or more machines per board. On Linux, first `apt install bubblewrap socat`; the sandbox there has not run yet. Private until the first public release ([plan](docs/PLAN.md)).
+> **Status: early (v0.13).** Works on macOS and Linux, one or more machines per board. On Linux, first `apt install bubblewrap socat`; the sandbox there has not run yet. Private until the first public release ([plan](docs/PLAN.md)).
 
 ## You need
 

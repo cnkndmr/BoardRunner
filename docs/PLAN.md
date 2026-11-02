@@ -1,4 +1,4 @@
-# BoardRunner plan (v0.12)
+# BoardRunner plan (v0.13)
 
 Goal: anyone with a Notion account and an agent CLI can go from zero to a first finished card in about 15 minutes, on their own machines, with their own agent names.
 
@@ -65,6 +65,7 @@ Built, reviewed and measured on 2026-11-02, then moved to the `webhook` branch t
 - A Mac and a Linux server shared one board (2026-11-02): each planned and ran only its own cards, and reassigning a running card stopped it on the server. Each machine had its own integration; the board must be added to each integration's page access in Notion's developer settings, adding the connection on the page alone was not enough.
 - The Linux sandbox itself has not run: the test machine lacks `socat`, and `strict` correctly refused to start.
 - Generated systemd files passed `systemd-analyze verify`, but were never installed.
+- The macOS service command ran under launchd's conditions (empty environment, PATH /usr/bin:/bin:/usr/sbin:/sbin, its working folder and log) for a full card: plan, approval, job, Done, with `claude_path` from init and the token from `.env`. The plist itself was not loaded: unloading a launchd job is outside what this project's agents may do, so `launchctl load` is checked in M5b.
 - Service files were generated and validated, but never installed. On macOS, launchd cannot reach `~/Documents`, so keep the config elsewhere.
 - The Claude Code sandbox needs `bwrap` and `socat` on Linux; `strict` refuses to run without them.
 - Real human approval was tested only with simulated edits, because an integration cannot act as a person.
@@ -90,3 +91,4 @@ Built, reviewed and measured on 2026-11-02, then moved to the `webhook` branch t
 - 2026-11-02 v0.10: M5 part one: four fresh-eyes walkthroughs of the README found 18 gaps (3 blockers: no "Run" stage, Schedule undocumented, no first-card steps). README rewritten; `--parent` takes a page link, Notion errors say what to do, `init` writes the local timezone, `.env` accepts `export`, `service` needs a valid config. Still open: a real person reaching a finished card from the README alone.
 - 2026-11-02 v0.11: M6 done: `listen` with secret path, signature check, follow-up and in-flight passes; `service --listen`, `--every`. Three-lens review (17 findings kept) fixed before the live test.
 - 2026-11-02 v0.12: back to the simple setup. Webhook parked on branch `webhook`. `init` now names the agent after the machine, creates the work folder, writes `.env`, takes `--live` and runs the checks. README cut to five steps (34 lines); the rest moved to `docs/guide.md`. Design rule 9: five steps to a first card. A second fresh-eyes walk (3 walkers + verifier) found 12 gaps, all fixed without lengthening the README (30 lines): `init` refuses folders launchd cannot read before touching Notion and writes `claude_path`; the Linux install line enables linger; `--version` is 0.12.
+- 2026-11-02 v0.13: `dry-run` reads the state earlier live passes saved (read only), so it no longer calls an approved card unverified. `init` writes the `claude` link, not the versioned file behind it, which changes on every Claude Code update. Service run checked under launchd's conditions.

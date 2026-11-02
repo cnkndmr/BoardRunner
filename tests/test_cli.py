@@ -89,11 +89,20 @@ def test_init_writes_the_claude_path_for_services(tmp_path, monkeypatch):
     monkeypatch.setattr(boardrunner, "init_board", lambda *a, **k: {
         "database_id": "db", "url": "", "human_id": "h", "bot_id": "b", "warnings": []})
     monkeypatch.setattr(boardrunner, "doctor_checks", lambda *a, **k: [(True, "ok")])
+    real = tmp_path / "versions" / "2.1.0"
+    real.parent.mkdir()
+    real.write_text("")
     fake = tmp_path / "bin" / "claude"
     fake.parent.mkdir()
-    fake.write_text("")
+    fake.symlink_to(real)  # how Claude Code installs itself; the version folder changes on every update
     monkeypatch.setattr(boardrunner.shutil, "which", lambda name: str(fake) if name == "claude" else None)
     config = tmp_path / "boardrunner.toml"
     assert main(["--config", str(config), "init", "--parent", "0123456789abcdef0123456789abcdef"]) == 0
-    assert f'claude_path = "{fake.resolve()}"' in config.read_text()
+    assert f'claude_path = "{fake}"' in config.read_text() and "versions" not in config.read_text()
     boardrunner.load_config(config)
+
+
+def test_saved_state_is_read_without_creating_anything(tmp_path):
+    import boardrunner
+    state = boardrunner._saved_state({}, tmp_path / "boardrunner.toml")
+    assert not state.cards and not (tmp_path / "state").exists()
