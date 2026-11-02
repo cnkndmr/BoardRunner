@@ -52,7 +52,7 @@ Jobs run in the Claude Code sandbox: no network, writes only in the work folder,
 
 Copy `boardrunner.py` and the config to each machine. Then, on every machine but one, change `me` to that machine's agent and add `primary = false`.
 
-Each machine needs a token that can see the board. Using one integration everywhere is simplest. If a machine has its own integration, share the board with it in Notion, set `bot_id` to its user id, and list the other machines' ids in `peer_bot_ids`. `doctor` tells you when a machine cannot see the board.
+Each machine needs a token that can see the board. Using one integration everywhere is simplest. If a machine has its own integration, add the board to that integration's page access (Notion developer settings, Content access; adding the connection from the page menu may not be enough), set `bot_id` to its user id, and list the other machines' ids in `peer_bot_ids`. `doctor` tells you when a machine cannot see the board.
 
 ## Development
 
