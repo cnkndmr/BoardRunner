@@ -75,7 +75,7 @@ Built, reviewed and measured on 2026-11-02, then moved to the `webhook` branch t
 | # | Decision | Default until decided |
 | --- | --- | --- |
 | 1 | When to go public | Private until M5 |
-| 3 | Name before going public | A US filing "BOARD RUNNER" (serial 98560614) for downloadable workflow management software was found on 2026-11-02, status unverified; boardrunner.com, .io, .app are registered by others, .dev looks free. Check the USPTO record before M7 and keep a fallback name ready |
+| 3 | Name before going public | Checked 2026-11-02 in USPTO TSDR and TMview (70+ offices incl. USPTO, EUIPO, UKIPO): no live BoardRunner mark in software classes 9 or 42. The 2024 US filing "BOARD RUNNER" (98560614) was abandoned on 2025-03-07; "BOARDRUNNER" (1999, US and CA) is dead; a UK "Board Runner" (UK00003740961) is registered for hand tools (class 8) only. boardrunner.dev looks free; .com, .io, .app are taken; github.com/boardrunner is an empty account. Keep the name. Fallback if needed: cardrun (no mark anywhere in TMview) |
 | 2 | Name | BoardRunner |
 
 ## Log
@@ -94,3 +94,4 @@ Built, reviewed and measured on 2026-11-02, then moved to the `webhook` branch t
 - 2026-11-02 v0.12: back to the simple setup. Webhook parked on branch `webhook`. `init` now names the agent after the machine, creates the work folder, writes `.env`, takes `--live` and runs the checks. README cut to five steps (34 lines); the rest moved to `docs/guide.md`. Design rule 9: five steps to a first card. A second fresh-eyes walk (3 walkers + verifier) found 12 gaps, all fixed without lengthening the README (30 lines): `init` refuses folders launchd cannot read before touching Notion and writes `claude_path`; the Linux install line enables linger; `--version` is 0.12.
 - 2026-11-02 v0.13: `dry-run` reads the state earlier live passes saved (read only), so it no longer calls an approved card unverified. `init` writes the `claude` link, not the versioned file behind it, which changes on every Claude Code update. Service run checked under launchd's conditions.
 - 2026-11-02 v0.13: `docs/stranger-test.md` for M5b testers (what to do, what to send back). Name check before M7 recorded under open decisions.
+- 2026-11-02 v0.13: name check done: BoardRunner has no live software trademark; the US filing that worried us was abandoned. Fallback: cardrun.
