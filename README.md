@@ -97,21 +97,16 @@ the cards assigned to it, so when one is off the others keep working.
 
 ## Stages
 
-```mermaid
-stateDiagram-v2
-    [*] --> Inbox: you create a card
-    Inbox --> Planning: next pass
-    Planning --> PlanReady: plan written
-    PlanReady --> Planning: Revision note
-    PlanReady --> Approved: you approve
-    Approved --> Running: schedule allows
-    Running --> Done: RESULT done
-    Running --> Failed: anything else
-    Running --> Stopped: you stop it
-    Inbox --> ForHuman: assigned to you
-    PlanReady: Plan ready
-    ForHuman: For human
-```
+| Stage | Who moves it there | What happens |
+|---|---|---|
+| Inbox | you | A new card. Pick a machine (Assignee) and a Schedule |
+| Planning | BoardRunner | The agent reads the card and writes a plan |
+| Plan ready | BoardRunner | Read the plan: approve it, or write a Revision note for a new one |
+| Approved | you | Waits for its Schedule: Now, Night, At date or Manual |
+| Running | BoardRunner | The job runs in the sandbox |
+| Done / Failed | BoardRunner | The report is on the card |
+| Stopped | you | The job ends within a minute; the card says when |
+| For human | BoardRunner | A card assigned to you (`me`); no agent touches it |
 
 ## You need
 
