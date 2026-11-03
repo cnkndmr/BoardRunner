@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Callable, Protocol
 from zoneinfo import ZoneInfo
 
-__version__ = "0.14"
+__version__ = "0.15"
 
 
 class Stage(StrEnum):

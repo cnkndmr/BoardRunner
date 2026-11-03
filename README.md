@@ -13,7 +13,7 @@
   <img src="https://img.shields.io/badge/macOS%20%7C%20Linux-supported-000000?logo=apple&logoColor=white" alt="macOS and Linux">
   <img src="https://img.shields.io/badge/Notion-board-000000?logo=notion&logoColor=white" alt="Notion board">
   <img src="https://img.shields.io/badge/Claude%20Code-runner-D97757" alt="Claude Code runner">
-  <img src="https://img.shields.io/badge/version-0.14-5E5CE6" alt="Version 0.14">
+  <img src="https://img.shields.io/badge/version-0.15-5E5CE6" alt="Version 0.15">
   <img src="https://img.shields.io/badge/dependencies-none-30D158" alt="No dependencies">
   <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="MIT license">
 </p>
@@ -34,7 +34,7 @@ You read it, move the card to **Approved**, and the job runs in a sandbox on
 that machine. The report lands on the same card. Your board is the only
 interface: no server, no web app, no account besides Notion and Claude.
 
-> **Status: early (v0.14).** Works on macOS and Linux, one or more machines per board. On Linux the sandbox needs `bubblewrap` and `socat` (`apt install bubblewrap socat`, or without sudo: `socat` from conda-forge on your PATH). Roadmap and open questions are in the [plan](docs/PLAN.md).
+> **Status: early (v0.15).** Works on macOS and Linux, one or more machines per board. On Linux the sandbox needs `bubblewrap` and `socat` (`apt install bubblewrap socat`, or without sudo: `socat` from conda-forge on your PATH). Roadmap and open questions are in the [plan](docs/PLAN.md).
 
 ## How a card moves
 

@@ -1,4 +1,4 @@
-# BoardRunner plan (v0.14)
+# BoardRunner plan (v0.15)
 
 Goal: anyone with a Notion account and an agent CLI can go from zero to a first finished card in about 15 minutes, on their own machines, with their own agent names.
 
@@ -100,3 +100,4 @@ Built, reviewed and measured on 2026-11-02, then moved to the `webhook` branch t
 - 2026-11-03 v0.14: public. History cleaned of a machine's asset tag and pushed to a fresh repository; tag v0.14 and a prerelease.
 - 2026-11-03 v0.14: Linux sandbox verified on Ubuntu 22.04 without sudo (socat from conda-forge). doctor names the no-sudo route.
 - 2026-11-03 v0.14: systemd service installed for real on Ubuntu 22.04; full card ran under the strict sandbox. Service files now carry PATH; Linux logs to boardrunner.log; missing sandbox tools fail the job at once with a card note.
+- 2026-11-03 v0.15: release with the service PATH fix, Linux log file and fail-fast sandbox check; Linux sandbox and systemd verified on Ubuntu 22.04.
