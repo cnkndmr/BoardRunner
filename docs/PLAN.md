@@ -74,7 +74,7 @@ Built, reviewed and measured on 2026-11-02, then moved to the `webhook` branch t
 
 | # | Decision | Default until decided |
 | --- | --- | --- |
-| 1 | When to go public | Private until M5 |
+| 1 | When to go public | Done 2026-11-03: public after M5, on a fresh repository so no pre-cleanup commit is reachable |
 | 3 | Name before going public | Checked 2026-11-02 in USPTO TSDR and TMview (70+ offices incl. USPTO, EUIPO, UKIPO): no live BoardRunner mark in software classes 9 or 42. The 2024 US filing "BOARD RUNNER" (98560614) was abandoned on 2025-03-07; "BOARDRUNNER" (1999, US and CA) is dead; a UK "Board Runner" (UK00003740961) is registered for hand tools (class 8) only. boardrunner.dev looks free; .com, .io, .app are taken; github.com/boardrunner is an empty account. Keep the name. Fallback if needed: cardrun (no mark anywhere in TMview) |
 | 2 | Name | BoardRunner |
 
@@ -97,3 +97,4 @@ Built, reviewed and measured on 2026-11-02, then moved to the `webhook` branch t
 - 2026-11-02 v0.13: name check done: BoardRunner has no live software trademark; the US filing that worried us was abandoned. Fallback: cardrun.
 - 2026-11-02 v0.14: M5b run end to end with a real launchd service and real human edits. Service log lines carry a time; a revised plan and a stopped job leave a note on the card; README step 2 and plan time fixed.
 - 2026-11-03 v0.14: README rebuilt with screenshots of a demo board (made-up cards only), Mermaid diagrams for the card flow, several machines and stages, a safety table and the columns-order note: Notion's API cannot order board columns, so init leaves them alphabetical.
+- 2026-11-03 v0.14: public. History cleaned of a machine's asset tag and pushed to a fresh repository; tag v0.14 and a prerelease.
