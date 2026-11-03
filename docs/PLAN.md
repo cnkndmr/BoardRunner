@@ -26,7 +26,7 @@ The core makes decisions and touches nothing. Everything that touches the outsid
 | Core | Card state machine, tested with a fake board and runner | Done (M1) |
 | Board | Read cards, write fields and body, create the schema | Done (M2): Notion REST API, standard library only |
 | Runner | Start, watch and stop a detached agent process | Done (M3): `claude -p` |
-| Sandbox | Limit network, writes and secret reads | Done (M3): Claude Code sandbox, `strict` by default; tried on macOS; on Linux it refused correctly without `socat`, never ran |
+| Sandbox | Limit network, writes and secret reads | Done (M3): Claude Code sandbox, `strict` by default; tried on macOS and on Ubuntu 22.04 (2026-11-03) |
 | Notifier | One-line event messages | `none` |
 | Scheduler | Run one pass per minute | Done (M4): `run --once` and generated systemd or launchd files; nothing is installed for you |
 
@@ -63,7 +63,7 @@ Built, reviewed and measured on 2026-11-02, then moved to the `webhook` branch t
 ## Known gaps after M4
 
 - A Mac and a Linux server shared one board (2026-11-02): each planned and ran only its own cards, and reassigning a running card stopped it on the server. Each machine had its own integration; the board must be added to each integration's page access in Notion's developer settings, adding the connection on the page alone was not enough.
-- The Linux sandbox itself has not run: the test machine lacks `socat`, and `strict` correctly refused to start.
+- The Linux sandbox ran on Ubuntu 22.04 (2026-11-03), bwrap 0.6.1 and socat 1.8 from conda-forge, no sudo: a `strict` job started through `ClaudeRunner` wrote in its work folder; writing outside it failed (read-only file system), `curl` failed (proxy 403), `~/.ssh` looked empty and a `.env` in the work folder was unreadable. Checked from outside the job, not from its report.
 - Generated systemd files passed `systemd-analyze verify`, but were never installed.
 - The macOS service command ran under launchd's conditions (empty environment, PATH /usr/bin:/bin:/usr/sbin:/sbin, its working folder and log) for a full card: plan, approval, job, Done, with `claude_path` from init and the token from `.env`. The plist itself was not loaded then; M5b loaded it (below).
 - M5b (2026-11-02): from the kit and README only, `init --live` passed all checks and the launchd service was installed for real. Two cards were created and edited by a person in the Notion UI: plan in about 4 minutes, approval to Done in about 1.5 minutes, a Revision note rewrote the plan, Stopped ended a running job within a minute. The service waited out a network outage and carried on. Fixed in v0.14: README step 2 wording, plan time stated as 3 to 5 minutes, times in the service log, a note when a revised plan replaces the old one, a note when a job is stopped.
@@ -98,3 +98,4 @@ Built, reviewed and measured on 2026-11-02, then moved to the `webhook` branch t
 - 2026-11-02 v0.14: M5b run end to end with a real launchd service and real human edits. Service log lines carry a time; a revised plan and a stopped job leave a note on the card; README step 2 and plan time fixed.
 - 2026-11-03 v0.14: README rebuilt with screenshots of a demo board (made-up cards only), Mermaid diagrams for the card flow, several machines and stages, a safety table and the columns-order note: Notion's API cannot order board columns, so init leaves them alphabetical.
 - 2026-11-03 v0.14: public. History cleaned of a machine's asset tag and pushed to a fresh repository; tag v0.14 and a prerelease.
+- 2026-11-03 v0.14: Linux sandbox verified on Ubuntu 22.04 without sudo (socat from conda-forge). doctor names the no-sudo route.

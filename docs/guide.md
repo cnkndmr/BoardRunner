@@ -69,7 +69,7 @@ Using one integration everywhere is simplest. If a machine has its own integrati
 - Python 3.11 or newer. Nothing to install: BoardRunner is one file, `boardrunner.py`.
 - [Claude Code](https://code.claude.com) (`claude` on your PATH), signed in as the user that runs BoardRunner. Jobs use your Claude account and quota.
 - A Notion account.
-- macOS, or Linux with `bwrap` and `socat` for the sandbox (`apt install bubblewrap socat`). Without them, jobs with `sandbox = "strict"` refuse to start. `doctor` tells you what is missing.
+- macOS, or Linux with `bwrap` and `socat` for the sandbox (`apt install bubblewrap socat`; without sudo, `conda create -p ~/.local/share/boardrunner-tools -c conda-forge socat` and link its `bin/socat` into `~/.local/bin`). bwrap also needs unprivileged user namespaces, which Ubuntu 22.04 allows by default. Without them, jobs with `sandbox = "strict"` refuse to start. `doctor` tells you what is missing.
 
 ## Notion setup in detail
 

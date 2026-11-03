@@ -34,7 +34,7 @@ You read it, move the card to **Approved**, and the job runs in a sandbox on
 that machine. The report lands on the same card. Your board is the only
 interface: no server, no web app, no account besides Notion and Claude.
 
-> **Status: early (v0.14).** Works on macOS and Linux, one or more machines per board. On Linux, first `apt install bubblewrap socat`; the sandbox there has not run yet. Roadmap and open questions are in the [plan](docs/PLAN.md).
+> **Status: early (v0.14).** Works on macOS and Linux, one or more machines per board. On Linux the sandbox needs `bubblewrap` and `socat` (`apt install bubblewrap socat`, or without sudo: `socat` from conda-forge on your PATH). Roadmap and open questions are in the [plan](docs/PLAN.md).
 
 ## How a card moves
 

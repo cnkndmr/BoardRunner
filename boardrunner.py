@@ -1260,7 +1260,8 @@ def doctor_checks(config: dict, policy: Policy, token: str, request: Callable[..
     if agent.get("sandbox", "strict") == "strict":
         missing = _sandbox_missing()
         results.append((not missing, "sandbox tools present" if not missing else
-                        f"sandbox tools missing: {', '.join(missing)}. Jobs would refuse to start."))
+                        f"sandbox tools missing: {', '.join(missing)}. Jobs would refuse to start. "
+                        f"Install them (apt install bubblewrap socat), or put socat from conda-forge on PATH."))
     else:
         results.append((True, "sandbox is off: jobs can reach the network and write anywhere you can"))
     try:
