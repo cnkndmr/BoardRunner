@@ -40,12 +40,12 @@ interface: no server, no web app, no account besides Notion and Claude.
 
 ```mermaid
 flowchart LR
-    A["📝 You create a card<br/><sub>title, machine, schedule</sub>"] --> B["🤖 Agent writes a plan<br/><sub>on the card</sub>"]
+    A["📝 You create a card"] --> B["🤖 The agent writes a plan"]
     B --> C{"👀 You read it"}
     C -- "Revision note" --> B
-    C -- "Approved" --> D["⚙️ Job runs<br/><sub>in a sandbox, when the schedule allows</sub>"]
-    D --> E["📋 Report on the card<br/><sub>Done or Failed</sub>"]
-    D -. "you move it to Stopped" .-> F["⏹ Stopped"]
+    C -- "Approved" --> D["⚙️ The job runs in a sandbox"]
+    D --> E["📋 Report on the card"]
+    D -. "Stopped" .-> F["⏹ Job ends"]
 ```
 
 <table>
@@ -80,19 +80,16 @@ flowchart LR
 ## Several machines, one board
 
 ```mermaid
-flowchart TB
-    subgraph N["Notion"]
-        BOARD[("Board<br/><sub>cards, plans, reports</sub>")]
+flowchart LR
+    YOU(["You, in Notion"]) --> BOARD[("Notion board")]
+    BOARD <-- "its own cards" --> S1
+    BOARD <-- "its own cards" --> S2
+    subgraph M1["Laptop, agent mac"]
+        S1["boardrunner, every minute"] --> C1["Claude Code in a sandbox"]
     end
-    subgraph M1["Laptop (agent: mac)"]
-        S1["boardrunner<br/><sub>one pass a minute</sub>"] --> C1["Claude Code<br/><sub>sandbox, ~/work</sub>"]
+    subgraph M2["Server, agent linux"]
+        S2["boardrunner, every minute"] --> C2["Claude Code in a sandbox"]
     end
-    subgraph M2["Server (agent: linux)"]
-        S2["boardrunner<br/><sub>one pass a minute</sub>"] --> C2["Claude Code<br/><sub>sandbox, ~/work</sub>"]
-    end
-    S1 <-- "its own cards only" --> BOARD
-    S2 <-- "its own cards only" --> BOARD
-    YOU(["You, in Notion"]) --> BOARD
 ```
 
 The board is the only hub. Machines never talk to each other; each handles only
@@ -102,7 +99,6 @@ the cards assigned to it, so when one is off the others keep working.
 
 ```mermaid
 stateDiagram-v2
-    direction LR
     [*] --> Inbox: you create a card
     Inbox --> Planning: next pass
     Planning --> PlanReady: plan written
