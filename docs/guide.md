@@ -36,7 +36,7 @@ Only cards created by you (`human_id` in the config) are handled. A card with a 
 python3 boardrunner.py service
 ```
 
-This writes launchd (macOS) or systemd (Linux) files into `./service` (change with `--output`) and prints the install line. It installs nothing. The files hold absolute paths to this Python, `boardrunner.py` and the config, so keep them where they are. Output goes to `boardrunner.log` beside the config.
+This writes launchd (macOS) or systemd (Linux) files into `./service` (change with `--output`) and prints the install line. It installs nothing. The files hold absolute paths to this Python, `boardrunner.py` and the config, so keep them where they are. They also keep the PATH of the shell you ran `service` in, because launchd and systemd start with a bare PATH that lacks ~/.local/bin (where `claude` and a no-sudo `socat` usually live); run `service` from the shell where `doctor` passes. Output goes to `boardrunner.log` beside the config.
 
 A service has a short PATH, so `init` writes the full path of `claude` as `claude_path` in your agent block; set it by hand if you move Claude Code. A service does not see your shell either, so it reads the token from `.env` beside `boardrunner.toml`. `init` writes that file for you (readable only by you); keep it out of git. To write it by hand: one line, `NOTION_TOKEN=<secret>`, then `chmod 600 .env`.
 

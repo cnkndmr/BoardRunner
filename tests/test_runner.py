@@ -139,3 +139,12 @@ def test_relative_state_folder_works(tmp_path, monkeypatch):
     run = ClaudeRunner({"workdir": "work", "claude_path": fake_claude(tmp_path, "echo $@ | grep -q settings.json && echo ok")}, type(tmp_path)("state"))
     handle = run.start("job", CARD, "p")
     assert handle.startswith("/") and wait(run, handle) == "done"
+
+
+def test_strict_job_refuses_when_sandbox_tools_are_off_path(tmp_path, monkeypatch):
+    import boardrunner
+    monkeypatch.setattr(boardrunner, "_sandbox_missing", lambda: ["socat"])
+    run = runner(tmp_path, "echo hi", sandbox="strict")
+    with pytest.raises(SetupError, match="socat"):
+        run.start("job", CARD, "p")
+    assert not (tmp_path / "state" / "jobs").exists()  # nothing started, nothing left behind

@@ -1117,6 +1117,9 @@ class ClaudeRunner:
             raise SetupError(f"workdir {self.workdir} does not exist")
         if not shutil.which(self.binary):
             raise SetupError(f"{self.binary} not found")
+        if self.sandbox == "strict" and (missing := _sandbox_missing()):
+            raise SetupError(f"sandbox tools not on this process's PATH: {', '.join(missing)}. If doctor finds them, "
+                             "run `boardrunner.py service` again from that shell and reinstall the service")
         safe_id = "".join(c for c in card.id if c.isalnum() or c == "-")
         job_dir = self.jobs_dir / f"{safe_id}-{kind}-{time.time_ns()}"
         job_dir.mkdir(parents=True)
@@ -1293,9 +1296,15 @@ def _cmd_doctor(args) -> int:
     return 0 if all(passed for passed, _ in checks) else 1
 
 
-def service_files(platform: str, python: str, script: Path, config: Path, seconds: int = 60) -> dict[str, str]:
-    """Scheduler files that repeat `run --once`. Nothing is installed: the user reads them first."""
+def service_files(platform: str, python: str, script: Path, config: Path, seconds: int = 60,
+                  path: str | None = None) -> dict[str, str]:
+    """Scheduler files that repeat `run --once`. Nothing is installed: the user reads them first.
+
+    `path` is the PATH of the shell that wrote them: launchd and systemd start with a bare PATH, where tools from
+    ~/.local/bin (claude, socat) are missing and the strict sandbox would refuse to start.
+    """
     workdir = config.parent
+    path = path if path is not None else os.environ.get("PATH", "")
     command = [python, str(script), "--config", str(config), "run", "--once"]
     if platform == "darwin":
         arguments = "\n".join(f"    <string>{part}</string>" for part in command)
@@ -1307,6 +1316,7 @@ def service_files(platform: str, python: str, script: Path, config: Path, second
 {arguments}
   </array>
   <key>WorkingDirectory</key><string>{workdir}</string>
+  <key>EnvironmentVariables</key><dict><key>PATH</key><string>{path}</string></dict>
   <key>StartInterval</key><integer>{seconds}</integer>
   <key>StandardOutPath</key><string>{workdir}/boardrunner.log</string>
   <key>StandardErrorPath</key><string>{workdir}/boardrunner.log</string>
@@ -1319,6 +1329,9 @@ Description=BoardRunner pass
 Type=oneshot
 WorkingDirectory={workdir}
 ExecStart={' '.join(command)}
+Environment="PATH={path}"
+StandardOutput=append:{workdir}/boardrunner.log
+StandardError=append:{workdir}/boardrunner.log
 # Jobs are separate process groups and must outlive this pass.
 KillMode=process
 """, "boardrunner.timer": f"""[Unit]

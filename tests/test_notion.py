@@ -195,6 +195,14 @@ def test_service_files_repeat_one_pass():
     assert "<integer>60</integer>" in mac["com.boardrunner.plist"]
 
 
+def test_service_files_carry_the_shell_path_and_log():
+    linux = service_files("linux", "/py", Path("/a/boardrunner.py"), Path("/a/c.toml"), path="/home/u/.local/bin:/usr/bin")
+    assert 'Environment="PATH=/home/u/.local/bin:/usr/bin"' in linux["boardrunner.service"]
+    assert "StandardOutput=append:/a/boardrunner.log" in linux["boardrunner.service"]
+    mac = service_files("darwin", "/py", Path("/a/boardrunner.py"), Path("/a/c.toml"), path="/Users/u/.local/bin:/usr/bin")
+    assert "<key>PATH</key><string>/Users/u/.local/bin:/usr/bin</string>" in mac["com.boardrunner.plist"]
+
+
 def test_token_from_a_file_beside_the_config(tmp_path, monkeypatch):
     monkeypatch.delenv("NOTION_TOKEN", raising=False)
     (tmp_path / ".env").write_text('NOTION_TOKEN="abc"\n')
