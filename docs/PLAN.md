@@ -96,3 +96,4 @@ Built, reviewed and measured on 2026-11-02, then moved to the `webhook` branch t
 - 2026-11-02 v0.13: `docs/stranger-test.md` for M5b testers (what to do, what to send back). Name check before M7 recorded under open decisions.
 - 2026-11-02 v0.13: name check done: BoardRunner has no live software trademark; the US filing that worried us was abandoned. Fallback: cardrun.
 - 2026-11-02 v0.14: M5b run end to end with a real launchd service and real human edits. Service log lines carry a time; a revised plan and a stopped job leave a note on the card; README step 2 and plan time fixed.
+- 2026-11-03 v0.14: README rebuilt with screenshots of a demo board (made-up cards only), Mermaid diagrams for the card flow, several machines and stages, a safety table and the columns-order note: Notion's API cannot order board columns, so init leaves them alphabetical.
