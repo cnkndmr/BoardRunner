@@ -101,3 +101,5 @@ Built, reviewed and measured on 2026-11-02, then moved to the `webhook` branch t
 - 2026-11-03 v0.14: Linux sandbox verified on Ubuntu 22.04 without sudo (socat from conda-forge). doctor names the no-sudo route.
 - 2026-11-03 v0.14: systemd service installed for real on Ubuntu 22.04; full card ran under the strict sandbox. Service files now carry PATH; Linux logs to boardrunner.log; missing sandbox tools fail the job at once with a card note.
 - 2026-11-03 v0.15: release with the service PATH fix, Linux log file and fail-fast sandbox check; Linux sandbox and systemd verified on Ubuntu 22.04.
+- 2026-11-06 v0.15: an idle service pass writes one log line an hour instead of every minute; run by hand it still prints every time.
+- 2026-11-06: decided not to move to a newer Notion API version for now (2022-06-28 stays; the board view already uses the newer views API).

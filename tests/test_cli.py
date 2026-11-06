@@ -112,3 +112,12 @@ def test_run_errors_carry_a_time_for_the_service_log(tmp_path, capsys):
     import re
     assert main(["--config", str(tmp_path / "missing.toml"), "run", "--once"]) == 2
     assert re.match(r"\d{4}-\d\d-\d\d \d\d:\d\d ", capsys.readouterr().err)
+
+
+def test_idle_service_passes_write_one_line_an_hour():
+    from datetime import datetime
+    from boardrunner import run_output
+    assert run_output([], datetime(2026, 1, 1, 12, 7), interactive=False) == ""
+    assert run_output([], datetime(2026, 1, 1, 12, 0), interactive=False) == "2026-01-01 12:00 Nothing to do."
+    assert run_output([], datetime(2026, 1, 1, 12, 7), interactive=True) == "2026-01-01 12:07 Nothing to do."
+    assert run_output(["c1: plan ready"], datetime(2026, 1, 1, 12, 7), interactive=False) == "2026-01-01 12:07 c1: plan ready"

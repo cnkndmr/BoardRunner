@@ -1242,8 +1242,9 @@ def _cmd_run(args) -> int:
         runner = ClaudeRunner(_agent(config), folder)
         log = run_pass(board, runner, state, policy, now, persist=lambda s: save_state(state_file, s))
         save_state(state_file, state)
-    stamp = now.strftime("%Y-%m-%d %H:%M")  # the service appends every pass to one log
-    print("\n".join(f"{stamp} {line}" for line in log) or f"{stamp} Nothing to do.")
+    text = run_output(log, now, interactive=sys.stdout.isatty())
+    if text:
+        print(text)
     return 0
 
 
@@ -1423,6 +1424,15 @@ def _finish_setup(path: Path, token_env: str) -> None:
         print("Next: python3 boardrunner.py service, then create a card on the board.")
     else:
         print("Fix the FAIL lines, then run: python3 boardrunner.py doctor")
+
+
+def run_output(log: list[str], now: datetime, interactive: bool) -> str:
+    """Lines for one pass, each with a time. The service appends every pass to one log, so an idle pass writes
+    a line only on the hour: enough to see the service is alive, without 1440 idle lines a day."""
+    stamp = now.strftime("%Y-%m-%d %H:%M")
+    if log:
+        return "\n".join(f"{stamp} {line}" for line in log)
+    return f"{stamp} Nothing to do." if interactive or now.minute == 0 else ""
 
 
 def _cmd_dry_run(args) -> int:

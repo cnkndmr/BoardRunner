@@ -161,7 +161,7 @@ by default).
   them; drag them once into the order you like.
 - If a card does not move, run `python3 boardrunner.py doctor`, then
   `python3 boardrunner.py run --once` by hand. The service logs to
-  `boardrunner.log`, one line with a time per event.
+  `boardrunner.log`, one line with a time per event; when idle, one line an hour.
 - On macOS, launchd cannot read ~/Documents, ~/Desktop or ~/Downloads, so keep
   the folder elsewhere.
 
